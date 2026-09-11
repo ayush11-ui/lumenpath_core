@@ -17,6 +17,9 @@ Built with Django 5.2, Leaflet.js, Tailwind CSS, and a custom Dijkstra pathfindi
 - **Report Incidents** — Click the map to report streetlight outages, suspicious activity, or poor pavement
 - **Live Navigation Simulation** — "Start Safe Navigation" animates a user dot walking the safest path
 - **Share Live Track** — Create a shareable tracking session via UUID endpoint
+- **Google Sign-In** — django-allauth based OAuth login with a profile drawer (avatar, name, email)
+- **Profile Drawer** — Mom auto-share toggle, CCTV priority toggle, "avoid unlit alleys" toggle, and one-tap SOS
+- **Dynamic Safety Heatmap** — Live heatmap rendered from a probe-level API (`/api/dynamic-heatmap/`)
 - **Expandable Bottom Sheet** — Safest/Fastest tab switcher with safety index meter, ETA, distance, and block count
 
 ---
@@ -28,10 +31,10 @@ Built with Django 5.2, Leaflet.js, Tailwind CSS, and a custom Dijkstra pathfindi
 git clone https://github.com/ayush11-ui/lumenpath_core.git
 cd lumenpath_core
 
-# 2. Create virtual environment and install Django
+# 2. Create virtual environment and install dependencies
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install django
+pip install -r requirements.txt
 
 # 3. Run migrations and seed demo data
 python manage.py migrate
@@ -43,6 +46,8 @@ python manage.py runserver 8099
 # 5. Open in browser
 # http://127.0.0.1:8099/
 ```
+
+> **Google login setup:** Create an OAuth client in [Google Cloud Console](https://console.cloud.google.com) (Authorized redirect URI: `http://127.0.0.1:8099/accounts/google/login/callback/`), then add it in Django admin at `/admin/socialaccount/socialapp/` (SITE: `example.com`).
 
 ---
 
@@ -80,6 +85,7 @@ lumenpath_core/
 | `GET` | `/api/routes/?start_lat=&start_lng=&end_lat=&end_lng=` | Returns both safest and fastest routes with polylines, distance, ETA, safety index |
 | `GET` | `/api/safe-zones/` | All safety landmark pins (Police, Hospital, 24/7 Store) |
 | `GET` | `/api/segments/` | All street segments with lighting/crime scores (drives heatmap) |
+| `GET` | `/api/dynamic-heatmap/?lat=&lng=&zoom=` | Dynamic probe-level safety heatmap data |
 | `GET` | `/api/incidents/` | Reported incident markers |
 | `POST` | `/api/incidents/report/` | Report a new incident (JSON body: type, severity, lat, lng) |
 | `POST` | `/api/sessions/` | Create a live-share tracking session |
@@ -127,8 +133,9 @@ The `seed_data` command creates an 8×8 block grid (127 connected street segment
 ## Tech Stack
 
 - **Backend**: Django 5.2 + SQLite3 (zero config)
-- **Frontend**: Tailwind CSS (CDN) + Leaflet.js (CDN)
-- **Tiles**: CartoDB Positron (light basemap)
+- **Auth**: django-allauth (Google OAuth)
+- **Frontend**: Tailwind CSS (CDN) + Leaflet.js + Leaflet.heat (CDN)
+- **Tiles**: OpenStreetMap standard tiles with a dark custom filter
 - **Algorithm**: Custom Dijkstra with heapq priority queue
 
 ---

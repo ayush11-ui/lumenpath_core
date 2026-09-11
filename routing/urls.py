@@ -8,6 +8,7 @@ urlpatterns = [
     path("", views.index, name="index"),
     # JSON APIs
     path("api/routes/", views.routes_api, name="routes_api"),
+    path("api/dynamic-heatmap/", views.dynamic_heatmap_api, name="dynamic_heatmap_api"),
     path("api/segments/", views.segments_api, name="segments_api"),
     path("api/safe-zones/", views.safe_zones_api, name="safe_zones_api"),
     path("api/incidents/", views.incidents_api, name="incidents_api"),

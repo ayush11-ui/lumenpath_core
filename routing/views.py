@@ -12,18 +12,14 @@ API surface
 """
 
 import json
+import math
+import random
 from django.http import JsonResponse
 from django.shortcuts import render
-from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 from .models import StreetSegment, SafeZone, Incident, TrackingSession
 from .utils import resolve_route
-
-
-def _exempt(view):
-    """Decorator shorthand — applies CSRF exemption to a plain-function view."""
-    return csrf_exempt(view)
 
 
 # ---------------------------------------------------------------------------
@@ -216,5 +212,75 @@ def get_session(request, token):
             "current_lng": session.current_lng,
             "destination_lat": session.destination_lat,
             "destination_lng": session.destination_lng,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dynamic safety heatmap
+# ---------------------------------------------------------------------------
+@require_GET
+def dynamic_heatmap_api(request):
+    """Generate ~30 randomized safety probes around the requested center.
+
+    Query params: lat, lng, radius_m (optional, default 500).
+
+    Each probe carries a ``safety_level``:
+        1 = Safe (green) · 2 = Moderate (yellow) · 3 = Unsafe (red)
+
+    The live overlay simulates a crowd-sourced "night-risk" field for the
+    presentation demo; a production build would source this from real reports.
+    """
+    try:
+        center_lat = float(request.GET.get("lat"))
+        center_lng = float(request.GET.get("lng"))
+    except (TypeError, ValueError):
+        return JsonResponse(
+            {"status": "error", "message": "Provide numeric 'lat' and 'lng'."},
+            status=400,
+        )
+
+    try:
+        radius_m = float(request.GET.get("radius_m", 500))
+    except (TypeError, ValueError):
+        radius_m = 500.0
+
+    point_count = 30
+    probes = []
+
+    for _ in range(point_count):
+        # Uniform random offset inside a circle around the center.
+        distance = random.uniform(0.0, radius_m)
+        bearing = random.uniform(0, 2 * math.pi)
+
+        # Approximate meters → degrees (valid for small distances).
+        d_lat = (distance * math.cos(bearing)) / 111320.0
+        d_lng = (distance * math.sin(bearing)) / (
+            111320.0 * math.cos(math.radians(center_lat))
+        )
+
+        # Weighted draw so the demo looks organic (mostly safe/moderate).
+        roll = random.random()
+        if roll < 0.45:
+            safety_level = 1
+        elif roll < 0.80:
+            safety_level = 2
+        else:
+            safety_level = 3
+
+        probes.append(
+            {
+                "lat": round(center_lat + d_lat, 6),
+                "lng": round(center_lng + d_lng, 6),
+                "safety_level": safety_level,
+            }
+        )
+
+    return JsonResponse(
+        {
+            "status": "ok",
+            "center": {"lat": center_lat, "lng": center_lng},
+            "count": point_count,
+            "probes": probes,
         }
     )

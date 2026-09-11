@@ -4,21 +4,26 @@
   Single-page map shell: Tailwind CSS (CDN) + Leaflet.js (CDN).
 
   Layout (mobile-first, "Rift Flora" vibe):
-    * Full-screen CartoDB Positron map
-    * Floating pill header   → "LumenPath Navigation"
-    * Floating left dock     → Safety Heatmap / Safe Zones / Report Incident
-    * Expandable bottom sheet → Safest vs Fastest tabs, safety index meter,
-                                Start Safe Navigation CTA, Share Live Track pill
+    * Full-screen OpenStreetMap canvas with a sleek monochrome CSS filter
+    * Floating pill header            → "LumenPath Navigation"
+    * Top-right Google auth           → Login button OR avatar + profile drawer
+    * Floating left dock              → Safety Heatmap / Safe Zones toggles
+    * Expandable bottom sheet         → Safest/Fastest tabs, safety index meter,
+                                       Start Safe Navigation CTA
+    * Sliding profile drawer          → Avatar, name, email, emergency contact
+                                       auto-share, routing preferences, SOS
 
   Frontend flow:
-    1. Page loads → map initialised, pulsing start/end markers placed.
-    2. GET /api/routes/  → draws the safest (glowing neon) + fastest (dashed
+    1. Page loads → map initialised, dynamic safety heatmap drawn, pulsing
+       start/end markers placed.
+    2. GET /api/routes/ → draws the safest (glowing neon) + fastest (dashed
        slate) polylines and fills the bottom-sheet metrics.
-    3. Tabs in the bottom sheet switch visual focus between the two routes.
-    4. Left-dock buttons toggle Safe Zone pins, incident markers and the
-       segment-based safety heatmap overlay.
-    5. "Start Safe Navigation" simulates a user walking the safest path by
-       stepping a location dot along the polyline (live-presentation effect).
+    3. GET /api/dynamic-heatmap/ → 30 randomized safety probes rendered as
+       Green/Yellow/Red circle markers around the map center.
+    4. Tabs in the bottom sheet switch visual focus between the two routes.
+    5. "Start Safe Navigation" simulates live walking by stepping a blue
+       location dot along the safest polyline (presentation effect).
+    6. The avatar button (top-right) slides the profile drawer in/out.
 -->
 <html lang="en">
 <head>
@@ -34,8 +39,8 @@
       theme: {
         extend: {
           colors: {
-            neon: "#ADFF2F",       // brand accent (green-yellow)
-            lumen: "#76FF03",      // route glow green
+            neon: "#ADFF2F",        // brand accent (green-yellow)
+            lumen: "#76FF03",       // safest-route glow green
             slate: { line: "#94A3B8" } // fastest-route dashed slate
           },
           fontFamily: {
@@ -54,48 +59,34 @@
 
   <style>
     /* ------------------------------------------------------------------ */
-    /* Leaflet map fills the full screen                                  */
+    /* Map fills the full screen                                          */
     /* ------------------------------------------------------------------ */
     html, body, #map { height: 100%; margin: 0; }
     body { font-family: Inter, system-ui, sans-serif; background: #0b0f0b; }
 
-    /* Neon "glow" on the safest route polyline */
+    /* Monochrome, watermark-free carto look applied to the OSM tiles */
+    .custom-map-filter { filter: grayscale(100%) contrast(1.1) opacity(0.8); }
+
+    /* Neon glow on the safest route polyline */
     .route-safest path {
       filter: drop-shadow(0 0 6px rgba(118, 255, 3, 0.9));
       transition: opacity .35s ease;
     }
-    /* Dashed fastest polyline + fade transitions for focus switching */
-    .route-fastest path {
-      transition: opacity .35s ease;
-    }
-    /* When a route is NOT focused we fade it back */
+    .route-fastest path { transition: opacity .35s ease; }
     .route-dim path { opacity: 0.25 !important; }
 
-    /* ------------------------------------------------------------------ */
-    /* Pulsing start/end marker (pure CSS ring animation)                 */
-    /* ------------------------------------------------------------------ */
-    .lumen-marker {
-      position: relative;
-      width: 22px; height: 22px;
-    }
+    /* Pulsing start/end markers (pure CSS ring animation) */
+    .lumen-marker { position: relative; width: 22px; height: 22px; }
     .lumen-marker .dot {
-      position: absolute;
-      inset: 0;
-      margin: auto;
-      width: 12px; height: 12px;
-      border-radius: 9999px;
-      background: #76FF03;
-      border: 3px solid #0b0f0b;
+      position: absolute; inset: 0; margin: auto;
+      width: 12px; height: 12px; border-radius: 9999px;
+      background: #76FF03; border: 3px solid #0b0f0b;
       box-shadow: 0 0 10px rgba(118, 255, 3, .9);
     }
     .lumen-marker .ring {
-      position: absolute;
-      inset: 0;
-      margin: auto;
-      width: 12px; height: 12px;
-      border-radius: 9999px;
-      background: transparent;
-      border: 2px solid #ADFF2F;
+      position: absolute; inset: 0; margin: auto;
+      width: 12px; height: 12px; border-radius: 9999px;
+      background: transparent; border: 2px solid #ADFF2F;
       animation: lumen-pulse 1.8s ease-out infinite;
     }
     @keyframes lumen-pulse {
@@ -104,49 +95,46 @@
       100% { transform: scale(3.4); opacity: 0; }
     }
 
-    /* Walking user dot used by the live simulation */
+    /* Blue walking user dot used by the live simulation */
     .user-dot {
-      width: 14px; height: 14px;
-      border-radius: 9999px;
-      background: #0b0f0b;
-      border: 4px solid #ADFF2F;
-      box-shadow: 0 0 0 2px rgba(0,0,0,.25), 0 0 14px rgba(173,255,47,.8);
+      width: 15px; height: 15px; border-radius: 9999px;
+      background: #3b82f6;
+      border: 3px solid #fff;
+      box-shadow: 0 0 0 2px rgba(0,0,0,.25), 0 0 16px rgba(59,130,246,.9);
+    }
+    /* Soft trail ring so the walk reads as "live" */
+    .user-dot::after {
+      content: ""; position: absolute; inset: -6px; border-radius: 9999px;
+      border: 2px solid rgba(59,130,246,.6);
+      animation: blue-pulse 1.6s ease-out infinite;
+    }
+    @keyframes blue-pulse {
+      0%   { transform: scale(1); opacity: .8; }
+      100% { transform: scale(2); opacity: 0; }
     }
 
-    /* Safe zone pin colours by type (pure CSS, no icon fonts needed) */
+    /* Safe zone pins by type (pure CSS) */
     .zone-pin {
-      width: 16px; height: 16px;
-      border-radius: 9999px 9999px 9999px 0;   /* angular pin */
-      transform: rotate(-45deg);
-      border: 2px solid #fff;
+      width: 16px; height: 16px; border-radius: 9999px 9999px 9999px 0;
+      transform: rotate(-45deg); border: 2px solid #fff;
       box-shadow: 0 2px 6px rgba(0,0,0,.35);
     }
-    .zone-police     { background: #2563eb; }
-    .zone-hospital   { background: #e11d48; }
-    .zone-store      { background: #0d9488; }
+    .zone-police   { background: #2563eb; }
+    .zone-hospital { background: #e11d48; }
+    .zone-store    { background: #0d9488; }
 
-    /* Incident marker */
-    .incident-pin {
-      width: 18px; height: 18px;
-      border-radius: 50%;
-      background: #0b0f0b;
-      border: 4px solid #f59e0b;
-      box-shadow: 0 0 0 3px rgba(245,158,11,.35), 0 0 12px rgba(245,158,11,.6);
+    /* Dynamic heatmap probes */
+    .safety-probe {
+      border: 2px solid rgba(255,255,255,.85);
+      box-shadow: 0 2px 8px rgba(0,0,0,.25);
     }
 
-    /* Bottom-sheet favourite of mobile UIs; keep it clickable above map */
+    /* Bottom sheet chrome */
     .grabber { width: 44px; height: 5px; border-radius: 9999px; background: #e5e7eb; }
 
-    /* Slim styled sliders-less progress meter */
-    .meter {
-      height: 12px;
-      background: #f1f5f9;
-      border-radius: 9999px;
-      overflow: hidden;
-    }
+    .meter { height: 12px; background: #f1f5f9; border-radius: 9999px; overflow: hidden; }
     .meter-fill {
-      height: 100%;
-      border-radius: 9999px;
+      height: 100%; border-radius: 9999px;
       background: linear-gradient(90deg, #c0ff33, #76FF03);
       box-shadow: 0 0 10px rgba(118,255,3,.7);
       transition: width .6s cubic-bezier(.22,1,.36,1);
@@ -154,19 +142,35 @@
 
     /* Leaflet tooltips keep the product feel */
     .leaflet-tooltip.lumen-tip {
-      background: #0b0f0b;
-      color: #ADFF2F;
+      background: #0b0f0b; color: #ADFF2F;
       border: 1px solid rgba(173,255,47,.35);
-      border-radius: 9999px;
-      font-size: 11px;
-      letter-spacing: .03em;
+      border-radius: 9999px; font-size: 11px; letter-spacing: .03em;
       box-shadow: 0 4px 16px rgba(0,0,0,.35);
     }
-    .leaflet-tooltip-top.lumen-tip:before {
-      border-top-color: rgba(173,255,47,.35);
-    }
+    .leaflet-tooltip-top.lumen-tip:before { border-top-color: rgba(173,255,47,.35); }
 
-    /* Hide scrollbars on the bottom sheet's inner content */
+    /* Sliding right-side profile drawer */
+    #profile-drawer {
+      transform: translateX(100%);
+      transition: transform .45s cubic-bezier(.22,1,.36,1);
+    }
+    #profile-drawer.open { transform: translateX(0); }
+
+    /* Toggle switch used in the drawer (pure checkbox + CSS) */
+    .switch { position: relative; display: inline-block; width: 42px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0; cursor: pointer; border-radius: 9999px;
+      background: #e2e8f0; transition: .25s;
+    }
+    .slider:before {
+      content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px;
+      border-radius: 9999px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25);
+      transition: .25s;
+    }
+    .switch input:checked + .slider { background: #ADFF2F; }
+    .switch input:checked + .slider:before { transform: translateX(18px); }
+
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
@@ -180,11 +184,10 @@
   <div id="map" class="absolute inset-0 z-0"></div>
 
   <!-- ================================================================ -->
-  <!-- Floating pill header                                             -->
+  <!-- Floating pill header (top centre)                                -->
   <!-- ================================================================ -->
   <header class="fixed top-4 left-1/2 -translate-x-1/2 z-[1100] pointer-events-none">
     <div class="flex items-center gap-2 bg-black/85 backdrop-blur rounded-full pl-3 pr-4 py-2 shadow-xl">
-      <!-- little glow orb logo -->
       <span class="w-2.5 h-2.5 rounded-full bg-lumen shadow-[0_0_10px_#76FF03]"></span>
       <h1 class="text-sm font-bold tracking-wide text-white">
         LumenPath <span class="text-lumen font-medium">Navigation</span>
@@ -193,80 +196,191 @@
   </header>
 
   <!-- ================================================================ -->
+  <!-- Top-right Google auth / profile button                           -->
+  <!-- ================================================================ -->
+  <div class="fixed top-4 right-4 z-[1100]">
+    {% if user.is_authenticated %}
+      <!-- Signed-in: avatar opens the profile drawer -->
+      <button id="btn-profile"
+              class="w-11 h-11 rounded-full bg-black/85 backdrop-blur p-0.5 border-2 border-neon
+                     shadow-[0_0_18px_rgba(173,255,47,0.5)] overflow-hidden
+                     hover:scale-105 active:scale-95 transition">
+        {% with social_acc=user.socialaccount_set.all.0 %}
+          {% if social_acc %}
+            <img src="{{ social_acc.get_avatar_url|default:'/static/img/avatar.png' }}"
+                 alt="Profile" class="w-full h-full rounded-full object-cover"
+                 onerror="this.style.display='none';" />
+          {% else %}
+            <span class="w-full h-full rounded-full bg-neon text-black flex items-center justify-center
+                         text-sm font-extrabold">{{ user.first_name|default:user.username|slice:":1"|upper }}</span>
+          {% endif %}
+        {% endwith %}
+      </button>
+    {% else %}
+      <!-- Signed-out: neon "Login with Google" button -->
+      <a href="/accounts/google/login/?next=/"
+         class="flex items-center gap-2 bg-neon text-black font-bold text-xs px-4 py-2.5 rounded-full
+                shadow-[0_4px_20px_rgba(173,255,47,0.5)] hover:scale-105 active:scale-95 transition">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 48 48">
+          <path fill="#4285F4" d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"/>
+          <path fill="#34A853" d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.01 15.4 46 24 46z"/>
+          <path fill="#FBBC05" d="M11.69 28.18c-.46-1.32-.72-2.74-.72-4.18s.26-2.86.72-4.18v-5.7H4.34A21.95 21.95 0 0 0 2 24c0 3.55.85 6.91 2.34 9.88l7.35-5.7z"/>
+          <path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.99 4.34 14.12l7.35 5.7C13.42 14.62 18.27 10.75 24 10.75z"/>
+        </svg>
+        Login with Google
+      </a>
+    {% endif %}
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- Sliding profile drawer (right side, full height)                 -->
+  <!-- ================================================================ -->
+  <aside id="profile-drawer"
+         class="fixed top-0 right-0 z-[1500] h-full w-80 bg-white/95 backdrop-blur
+                shadow-[-12px_0_40px_rgba(0,0,0,0.25)] overflow-y-auto no-scrollbar">
+    <div class="p-6">
+
+      <!-- Header + close -->
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-lg font-extrabold text-slate-900">Safety Profile</h2>
+        <button id="btn-close-drawer"
+                class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold
+                       hover:bg-slate-200 transition">✕</button>
+      </div>
+
+      {% if user.is_authenticated %}
+        {% with social_acc=user.socialaccount_set.all.0 %}
+          <!-- Avatar + identity -->
+          <div class="flex items-center gap-4 mb-6">
+            <div class="w-16 h-16 rounded-full overflow-hidden border-2 border-neon shadow-lg">
+              {% if social_acc %}
+                <img src="{{ social_acc.get_avatar_url|default:'' }}" alt="Avatar"
+                     class="w-full h-full object-cover"
+                     onerror="this.style.display='none';this.parentElement.style.background='#ADFF2F';" />
+              {% endif %}
+            </div>
+            <div>
+              <p class="font-bold text-slate-900 leading-tight">
+                {{ user.get_full_name|default:user.username }}
+              </p>
+              <p class="text-xs text-slate-500">{{ user.email|default:"No email" }}</p>
+            </div>
+          </div>
+        {% endwith %}
+
+        <!-- Emergency contacts -->
+        <section class="mb-6">
+          <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-3">
+            Emergency Contacts
+          </p>
+          <div class="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 mb-2">
+            <div>
+              <p class="text-sm font-semibold text-slate-800">Mom</p>
+              <p class="text-[11px] text-slate-500">Auto-share live location</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggle-mom" checked />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <p id="mom-share-note" class="hidden text-[11px] font-semibold text-neon-dark
+                                        pl-1">Mom is getting your live track.</p>
+        </section>
+
+        <!-- Routing preferences -->
+        <section class="mb-6">
+          <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-3">
+            Routing Preferences
+          </p>
+
+          <div class="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 mb-2">
+            <div>
+              <p class="text-sm font-semibold text-slate-800">CCTV Priority</p>
+              <p class="text-[11px] text-slate-500">Favour streets with cameras</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggle-cctv" />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 mb-2">
+            <div>
+              <p class="text-sm font-semibold text-slate-800">Avoid Unlit Alleys</p>
+              <p class="text-[11px] text-slate-500">Skip streets with no lighting</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggle-alleys" checked />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1 pl-1">Saved automatically on this device.</p>
+        </section>
+
+        <!-- SOS -->
+        <button id="btn-sos"
+                class="w-full rounded-2xl bg-red-600 py-4 text-sm font-extrabold tracking-widest
+                       text-white shadow-[0_10px_30px_rgba(220,38,38,0.45)]
+                       hover:scale-[1.02] active:scale-[0.98] transition mb-4">
+          TRIGGER SOS
+        </button>
+
+        <!-- Logout (allauth's logout requires a POST) -->
+        <form method="post" action="/accounts/logout/"
+              class="border-t border-slate-100 pt-4 text-center">
+          {% csrf_token %}
+          <button type="submit"
+                  class="text-xs font-semibold text-slate-400 hover:text-slate-700 transition">
+            Log out
+          </button>
+        </form>
+      {% else %}
+        <!-- Guest view in the drawer -->
+        <p class="text-sm text-slate-500 mb-4">
+          Sign in with Google to unlock live-track sharing and your SOS contacts.
+        </p>
+        <a href="/accounts/google/login/?next=/"
+           class="block w-full rounded-2xl bg-neon text-black py-3 text-sm font-extrabold text-center
+                  shadow-lg hover:scale-[1.02] transition">
+          Login with Google
+        </a>
+      {% endif %}
+    </div>
+  </aside>
+
+  <!-- ================================================================ -->
   <!-- Floating left dock (map layer toggles)                           -->
   <!-- ================================================================ -->
-  <nav id="left-dock"
-       class="fixed left-4 top-1/2 -translate-y-1/2 z-[1100] flex flex-col gap-3">
+  <nav class="fixed left-4 top-1/2 -translate-y-1/2 z-[1100] flex flex-col items-center gap-2
+              bg-black/85 backdrop-blur rounded-[2rem] p-2 shadow-xl border border-white/10">
+    <p class="text-[8px] font-bold uppercase tracking-widest text-white/50 pt-1">Layers</p>
+
     <!-- Safety Heatmap -->
     <button id="btn-heatmap"
-            data-tip="Safety heatmap"
-            class="dock-btn w-12 h-12 rounded-2xl bg-black/85 backdrop-blur text-neon border border-white/10
-                   shadow-xl flex items-center justify-center hover:scale-105 active:scale-95 transition">
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="3" cy="3" r="2"/><circle cx="7" cy="5" r="2"/><circle cx="11" cy="7" r="2"/>
-        <circle cx="17" cy="11" r="2"/><circle cx="14" cy="15" r="2"/><circle cx="20" cy="17" r="2"/>
-        <circle cx="11" cy="17" r="2"/><circle cx="6" cy="21" r="2"/><circle cx="13" cy="21" r="2"/>
-      </svg>
-    </button>
-    <!-- Safe Zones -->
-    <button id="btn-zones"
-            data-tip="Safe zones"
-            class="dock-btn w-12 h-12 rounded-2xl bg-black/85 backdrop-blur text-neon border border-white/10
-                   shadow-xl flex items-center justify-center hover:scale-105 active:scale-95 transition">
+            class="w-12 h-12 rounded-full text-neon flex items-center justify-center
+                   hover:bg-white/10 active:scale-95 transition"
+            title="Safety Heatmap">
       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none"
            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0Z"/>
         <circle cx="12" cy="10" r="3"/>
       </svg>
     </button>
-    <!-- Report Incident -->
-    <button id="btn-incidents"
-            data-tip="Report incident"
-            class="dock-btn w-12 h-12 rounded-2xl bg-black/85 backdrop-blur text-neon border border-white/10
-                   shadow-xl flex items-center justify-center hover:scale-105 active:scale-95 transition">
+    <span class="text-[10px] font-semibold text-neon pb-1">Heat</span>
+
+    <!-- Safe Zones -->
+    <button id="btn-zones"
+            class="w-12 h-12 rounded-full text-neon flex items-center justify-center
+                   hover:bg-white/10 active:scale-95 transition"
+            title="Safe Zones">
       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none"
            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10"/>
         <path d="M12 8v4M12 16h.01"/>
       </svg>
     </button>
-    <!-- Inline icon labels (shown when a button is active) -->
-    <p id="dock-label"
-       class="hidden text-[11px] font-semibold text-neon bg-black/80 backdrop-blur rounded-full px-3 py-1
-              text-center shadow-lg mx-auto"></p>
+    <span class="text-[10px] font-semibold text-neon pb-1">Zones</span>
   </nav>
-
-  <!-- ================================================================ -->
-  <!-- Floating "Report incident" compose card (appears on map click)   -->
-  <!-- ================================================================ -->
-  <div id="report-card"
-       class="hidden fixed top-24 right-4 z-[1300] w-72 rounded-3xl bg-white shadow-2xl p-4
-              border border-slate-200">
-    <h3 class="text-sm font-bold mb-2">Report incident here</h3>
-    <p id="report-coords" class="text-[11px] text-slate-500 mb-3 font-mono"></p>
-    <label class="text-[11px] font-medium text-slate-500">Type</label>
-    <select id="report-type"
-            class="w-full mb-2 mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm">
-      <option>Streetlight outage</option>
-      <option>Suspicious activity</option>
-      <option>Poor pavement</option>
-      <option>Other</option>
-    </select>
-    <label class="text-[11px] font-medium text-slate-500">Severity</label>
-    <select id="report-severity"
-            class="w-full mb-3 mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm">
-      <option>High</option><option>Medium</option><option>Low</option>
-    </select>
-    <div class="flex gap-2">
-      <button id="report-cancel"
-              class="flex-1 rounded-xl border border-slate-200 py-2 text-xs font-semibold text-slate-600
-                     active:scale-95 transition">Cancel</button>
-      <button id="report-submit"
-              class="flex-1 rounded-xl bg-black py-2 text-xs font-bold text-neon
-                     active:scale-95 transition shadow-lg">Send report</button>
-    </div>
-  </div>
 
   <!-- ================================================================ -->
   <!-- Bottom sheet (expandable)                                        -->
@@ -277,7 +391,7 @@
                   transition-transform duration-500 ease-[cubic-bezier(.22,1,.36,1)]
                   translate-y-[calc(100%-7.25rem)]">
 
-    <!-- collapsed preview: grabber + its compact row -->
+    <!-- collapsed preview: grabber + compact row -->
     <button id="sheet-toggle" class="w-full pt-2 px-5 pb-3 text-left">
       <div class="grabber mx-auto mb-3"></div>
       <div class="flex items-center justify-between">
@@ -340,17 +454,8 @@
         Start Safe Navigation
       </button>
 
-      <!-- Secondary floating pill -->
-      <button id="btn-share"
-              class="w-full flex items-center justify-center gap-2 rounded-full border border-slate-200
-                     bg-slate-50 py-3 text-xs font-bold text-slate-700
-                     hover:bg-slate-100 active:scale-[0.98] transition">
-        <span class="w-1.5 h-1.5 rounded-full bg-lumen animate-pulse"></span>
-        Share Live Track
-      </button>
-
       <!-- tiny live-walk status -->
-      <p id="walk-status" class="hidden mt-4 text-center text-[11px] font-semibold text-slate-500"></p>
+      <p id="walk-status" class="hidden mt-2 text-center text-[11px] font-semibold text-slate-500"></p>
     </div>
   </section>
 
@@ -372,14 +477,14 @@
   const map = L.map('map', { zoomControl: false, attributionControl: true })
     .setView([-34.6210, -58.4420], 15);
 
-  // CartoDB Positron — light, minimal base layer for the demo
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    subdomains: 'abcd',
+  // Standard OpenStreetMap tiles, styled monochrome via CSS filter.
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    subdomains: 'abc',
     maxZoom: 20,
+    className: 'custom-map-filter',   // <-- the sleek grayscale carto look
   }).addTo(map);
 
-  // Keep zoom controls in the corner Leaflet knows best
   L.control.zoom({ position: 'bottomright' }).addTo(map);
 
   /* ------------------------------------------------------------------ */
@@ -389,22 +494,76 @@
   const END   = { lat: -34.6015, lng: -58.4171 };   // north-east of mock grid
 
   /* ------------------------------------------------------------------ */
-  /* 2. Route polylines + markers                                        */
+  /* 2. Dynamic safety heatmap layer                                     */
+  /* ------------------------------------------------------------------ */
+  const heatLayer = L.layerGroup();
+  let heatVisible = false;
+
+  /**
+   * Fetch /api/dynamic-heatmap/ around (centerLat, centerLng) and render 30
+   * colored circle markers:
+   *   #ADFF2F (green/yellow neon)  → safe
+   *   #FFD700 (yellow)             → moderate
+   *   #FF4500 (red)                → unsafe
+   */
+  function renderDynamicHeatmap(centerLat, centerLng) {
+    const params = new URLSearchParams({
+      lat: centerLat,
+      lng: centerLng,
+      radius_m: 600,
+    });
+
+    fetch(`/api/dynamic-heatmap/?${params}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.status !== 'ok') throw new Error(data.message);
+        heatLayer.clearLayers();
+
+        const COLOR = { 1: '#ADFF2F', 2: '#FFD700', 3: '#FF4500' };
+        const LABEL = { 1: 'Safe', 2: 'Moderate', 3: 'Unsafe' };
+        const RADIUS = { 1: 14, 2: 18, 3: 22 };
+
+        (data.probes || []).forEach((probe) => {
+          const color = COLOR[probe.safety_level];
+          L.circleMarker([probe.lat, probe.lng], {
+            radius: RADIUS[probe.safety_level],
+            stroke: true,
+            color: 'rgba(255,255,255,.9)',
+            weight: 1.5,
+            fillColor: color,
+            fillOpacity: 0.55,
+            className: 'safety-probe',
+          }).bindTooltip(`Safety: ${LABEL[probe.safety_level]}`, {
+            direction: 'top',
+            className: 'lumen-tip',
+          }).addTo(heatLayer);
+        });
+
+        // Show the layer if the dock toggle is already ON.
+        if (heatVisible) map.addLayer(heatLayer);
+      })
+      .catch((err) => console.error('dynamic heatmap:', err));
+  }
+
+  function toggleHeatmap() {
+    heatVisible = !heatVisible;
+    if (heatVisible) map.addLayer(heatLayer); else map.removeLayer(heatLayer);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 3. Route polylines + pins                                           */
   /* ------------------------------------------------------------------ */
   let safestPoly = null;
   let fastestPoly = null;
   let startMarker = null;
   let endMarker = null;
 
-  // Focus state: 'safest' | 'fastest'
   let activeTab = 'safest';
-
   let safestData = null;
   let fastestData = null;
-  let navigatorMarker = null;   // the walking-dot used by the simulation
   let navigationTimer = null;
+  let navigatorMarker = null;
 
-  // Div-icon so we can drive the pulse via CSS animation
   function pulseIcon() {
     return L.divIcon({
       className: '',
@@ -427,7 +586,7 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* 3. Fetch + draw both routes                                         */
+  /* 4. Fetch + draw both routes                                         */
   /* ------------------------------------------------------------------ */
   async function loadRoutes() {
     showToast('Routing safest and fastest options…');
@@ -449,45 +608,36 @@
 
       // Safest: glowing neon lime, weight 6
       safestPoly = L.polyline(data.safest.path, {
-        color: '#76FF03',
-        weight: 6,
-        opacity: 0.95,
-        className: 'route-safest',
+        color: '#76FF03', weight: 6, opacity: 0.95, className: 'route-safest',
       }).addTo(map);
 
       // Fastest: translucent dashed slate
       fastestPoly = L.polyline(data.fastest.path, {
-        color: '#94A3B8',
-        weight: 4,
-        dashArray: '7 7',
-        opacity: 0.85,
+        color: '#94A3B8', weight: 4, dashArray: '7 7', opacity: 0.85,
         className: 'route-fastest',
       }).addTo(map);
 
       placePins(START, END);
 
-      // Fit to show both polylines comfortably
-      map.fitBounds(L.latLngBounds([ ...data.safest.path, ...data.fastest.path ]),
+      map.fitBounds(L.latLngBounds([...data.safest.path, ...data.fastest.path]),
         { padding: [60, 60] });
 
-      // Preview line + first tab render
       document.getElementById('preview-line').textContent =
         `Safest ${formatDistance(data.safest.distance_meters)} · index ${data.safest.safety_index}/100`;
-      setTab('safest');
 
+      setTab('safest');
     } catch (err) {
       console.error(err);
-      showToast('Could not load routes. Is `python manage.py seed_data` run?');
+      showToast('Could not load routes. Run `python manage.py seed_data`.');
     }
   }
 
   /* ------------------------------------------------------------------ */
-  /* 4. Tab switching — visual focus + metric refresh                    */
+  /* 5. Tab switching — visual focus + metric refresh                    */
   /* ------------------------------------------------------------------ */
   function setTab(tab) {
     activeTab = tab;
 
-    // Toggle button pill styling
     document.querySelectorAll('.tab-btn').forEach((btn) => {
       const on = btn.dataset.tab === tab;
       btn.classList.toggle('bg-black', on);
@@ -496,17 +646,15 @@
       btn.classList.toggle('text-slate-500', !on);
     });
 
-    // Focus switching on the polylines (dim the non-active route)
-    if (safestPoly) safestPoly.getElement() && safestPoly.setStyle({ opacity: 1 });
-    if (fastestPoly) fastestPoly.getElement() && fastestPoly.setStyle({ opacity: 1 });
+    if (safestPoly) safestPoly.setStyle({ opacity: 1 });
+    if (fastestPoly) fastestPoly.setStyle({ opacity: 1 });
     document.querySelector('.route-safest')?.classList.toggle('route-dim', tab !== 'safest');
     document.querySelector('.route-fastest')?.classList.toggle('route-dim', tab !== 'fastest');
 
-    // Pull metrics from whichever route is focused
     const r = tab === 'safest' ? safestData : fastestData;
     if (!r) return;
 
-    setSafetyMeter(r.safety_index, tab);
+    setSafetyMeter(r.safety_index);
     document.getElementById('metric-distance').textContent = formatDistance(r.distance_meters);
     document.getElementById('metric-eta').textContent = `${r.duration_minutes} min`;
     document.getElementById('metric-blocks').textContent = `${r.segments} blocks`;
@@ -515,7 +663,7 @@
       `index ${r.safety_index}/100`;
   }
 
-  function setSafetyMeter(index, tab) {
+  function setSafetyMeter(index) {
     document.getElementById('safety-fill').style.width = `${index}%`;
     document.getElementById('safety-value').textContent = `${index}/100`;
 
@@ -524,46 +672,39 @@
     else if (index >= 60) note.textContent = 'Good — a few darker pockets, safe with awareness.';
     else if (index >= 40) note.textContent = 'Moderate — carry a light and stay on main streets.';
     else                  note.textContent = 'Low — avoid alone at night where possible.';
-
-    // Slight metric readout shift when toggling to fastest
-    document.getElementById('safety-note').innerHTML +=
-      tab === 'fastest'
-        ? ' <span class="text-slate-400">(fastest route — same safety model)</span>'
-        : '';
   }
 
   /* ------------------------------------------------------------------ */
-  /* 5. Safe zone pins (left dock toggle)                                */
+  /* 6. Safe zones (dock toggle)                                         */
   /* ------------------------------------------------------------------ */
   let zoneLayer = L.layerGroup();
   let zonesVisible = false;
 
-  async function loadZones() {
-    try {
-      const res = await fetch('/api/safe-zones/');
-      const data = await res.json();
-      if (data.status !== 'ok') return;
+  function loadZones() {
+    fetch('/api/safe-zones/')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.status !== 'ok') return;
 
-      data.safe_zones.forEach((z) => {
-        const colorClass =
-          z.zone_type === 'Police' ? 'zone-police'
-        : z.zone_type === 'Hospital' ? 'zone-hospital'
-        : 'zone-store';
+        data.safe_zones.forEach((z) => {
+          const colorClass =
+            z.zone_type === 'Police' ? 'zone-police'
+          : z.zone_type === 'Hospital' ? 'zone-hospital'
+          : 'zone-store';
 
-        L.marker([z.lat, z.lng], {
-          icon: L.divIcon({
-            className: '',
-            html: `<span class="zone-pin ${colorClass}"></span>`,
-            iconSize: [16, 16],
-            iconAnchor: [8, 14],
-          }),
-        }).bindTooltip(`${z.name} · ${z.zone_type}`, {
-          direction: 'top', className: 'lumen-tip',
-        }).addTo(zoneLayer);
-      });
-    } catch (err) {
-      console.error('safe zones:', err);
-    }
+          L.marker([z.lat, z.lng], {
+            icon: L.divIcon({
+              className: '',
+              html: `<span class="zone-pin ${colorClass}"></span>`,
+              iconSize: [16, 16],
+              iconAnchor: [8, 14],
+            }),
+          }).bindTooltip(`${z.name} · ${z.zone_type}`, {
+            direction: 'top', className: 'lumen-tip',
+          }).addTo(zoneLayer);
+        });
+      })
+      .catch((err) => console.error('safe zones:', err));
   }
 
   function toggleZones() {
@@ -572,135 +713,7 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* 6. Incident markers + "Report Incident" composition                 */
-  /* ------------------------------------------------------------------ */
-  let incidentLayer = L.layerGroup();
-  let incidentsVisible = false;
-  let reportMode = false;          // true while "Report Incident" is armed
-  let pendingReport = null;        // {lat, lng} awaiting confirmation
-
-  async function loadIncidents() {
-    try {
-      const res = await fetch('/api/incidents/');
-      const data = await res.json();
-      incidentLayer.clearLayers();
-      (data.incidents || []).forEach((inc) => {
-        L.marker([inc.lat, inc.lng], {
-          icon: L.divIcon({ className: '', html: '<span class="incident-pin"></span>',
-                            iconSize: [18, 18], iconAnchor: [9, 9] }),
-        }).bindTooltip(`${inc.type} (${inc.severity})`, {
-          direction: 'top', className: 'lumen-tip',
-        }).addTo(incidentLayer);
-      });
-    } catch (err) { console.error('incidents:', err); }
-  }
-
-  function toggleIncidents() {
-    incidentsVisible = !incidentsVisible;
-    // "Report Incident" doubles as: show reported incidents AND allow new ones
-    if (incidentsVisible) {
-      reportMode = true;
-      map.addLayer(incidentLayer);
-      showToast('Tap the map to report an incident');
-    } else {
-      reportMode = false;
-      map.removeLayer(incidentLayer);
-      hideReportCard();
-    }
-  }
-
-  // Clicking the map while reportMode is armed composes a report
-  map.on('click', (e) => {
-    if (!reportMode) return;
-    pendingReport = { lat: e.latlng.lat, lng: e.latlng.lng };
-    document.getElementById('report-coords').textContent =
-      `Lat ${pendingReport.lat.toFixed(5)} · Lng ${pendingReport.lng.toFixed(5)}`;
-    document.getElementById('report-card').classList.remove('hidden');
-  });
-
-  async function submitReport() {
-    if (!pendingReport) return;
-    try {
-      const res = await fetch('/api/incidents/report/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lat: pendingReport.lat,
-          lng: pendingReport.lng,
-          type: document.getElementById('report-type').value,
-          severity: document.getElementById('report-severity').value,
-        }),
-      });
-      const data = await res.json();
-      if (data.status === 'ok') {
-        showToast('Incident reported — stay alert on your route');
-        await loadIncidents(); // refresh pin set
-      } else {
-        showToast(data.message || 'Could not send report');
-      }
-    } catch (err) {
-      showToast('Network error while reporting');
-    } finally {
-      hideReportCard();
-    }
-  }
-
-  function hideReportCard() {
-    document.getElementById('report-card').classList.add('hidden');
-    pendingReport = null;
-  }
-
-  /* ------------------------------------------------------------------ */
-  /* 7. Safety heatmap overlay                                          */
-  /*     Built from live segment data: mid-point CircleMarkers tinted by */
-  /*     the identical safety model used by the backend solver.          */
-  /* ------------------------------------------------------------------ */
-  let heatLayer = L.layerGroup();
-  let heatVisible = false;
-
-  async function loadHeatmap() {
-    try {
-      // Single extra datasource endpoint so the heatmap is 100% real DB data.
-      const res = await fetch('/api/segments/');
-      const data = await res.json();
-      heatLayer.clearLayers();
-
-      (data.segments || []).forEach((s) => {
-        // Same normalisation as routing/utils.py `_segment_safety_score`
-        const lightingN = (s.lighting_score - 1) / 9;
-        const crimeN    = 1 - (s.crime_rate - 1) / 9;
-        const safeness  = lightingN * 0.55 + crimeN * 0.45;  // 0 bad → 1 good
-
-        const danger = 1 - safeness; // invert: heatmap shows the RISK field
-        const color  = riskColor(danger, s.lighting_score, s.crime_rate);
-        const midLat = (s.start_lat + s.end_lat) / 2;
-        const midLng = (s.start_lng + s.end_lng) / 2;
-
-        L.circleMarker([midLat, midLng], {
-          radius: 4.5,
-          color,
-          weight: 1,
-          fillColor: color,
-          fillOpacity: 0.22 + danger * 0.3,
-        }).addTo(heatLayer);
-      });
-    } catch (err) { console.error('heatmap:', err); }
-  }
-
-  function riskColor(danger, light, crime) {
-    // Green → amber → red as danger rises
-    const h = Math.round(130 - danger * 130) % 360;        // 130=green, 0=red
-    return `hsl(${h}, 82%, ${46 + danger * 6}%)`;
-  }
-
-  function toggleHeatmap() {
-    heatVisible = !heatVisible;
-    if (heatVisible) map.addLayer(heatLayer); else map.removeLayer(heatLayer);
-  }
-
-  /* ------------------------------------------------------------------ */
-  /* 8. Live navigation simulation                                      */
-  /*     Steps the user dot along the safest polyline vertex-by-vertex.  */
+  /* 7. Live navigation simulation (blue dot)                            */
   /* ------------------------------------------------------------------ */
   function startNavigation() {
     if (!safestData || !safestPoly || navigationTimer) return;
@@ -708,23 +721,21 @@
     const coords = safestData.path;
     if (coords.length < 2) return;
 
-    // Dot plopped at the route start
     navigatorMarker = L.marker(coords[0], {
       icon: L.divIcon({ className: '', html: '<div class="user-dot"></div>',
-                        iconSize: [14, 14], iconAnchor: [7, 7] }),
+                        iconSize: [15, 15], iconAnchor: [7, 7] }),
       interactive: false,
     }).addTo(map);
 
-    // Update the CTA to an "Arriving…" state
     const btn = document.getElementById('btn-nav');
     btn.textContent = 'Walking your safe path…';
     btn.setAttribute('disabled', 'disabled');
     document.getElementById('walk-status').classList.remove('hidden');
 
-    let leg = 0;                 // which polyline segment (leg) we're on
-    let t = 0;                   // 0..1 progress within current leg
-    const STEP = 0.02;           // portion of a leg per tick (~ pacing)
-    const INTERVAL = 90;         // ms per tick → ≈ 1.8 m/s feel on short legs
+    let leg = 0;
+    let t = 0;
+    const STEP = 0.02;      // progress per tick within a leg
+    const INTERVAL = 90;    // ms per tick
 
     navigationTimer = setInterval(() => {
       const a = coords[leg];
@@ -741,7 +752,7 @@
           return;
         }
       }
-      // linear interpolation lat/lng → smooth walking motion
+
       const lat = a[0] + (b[0] - a[0]) * t;
       const lng = a[1] + (b[1] - a[1]) * t;
       navigatorMarker.setLatLng([lat, lng]);
@@ -759,34 +770,52 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* 9. Share Live Track — opens session + copies link                   */
+  /* 8. Profile drawer                                                   */
   /* ------------------------------------------------------------------ */
-  async function shareTrack() {
-    try {
-      const res = await fetch('/api/sessions/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          current_lat: START.lat,
-          current_lng: START.lng,
-          destination_lat: END.lat,
-          destination_lng: END.lng,
-        }),
-      });
-      const data = await res.json();
-      if (data.status !== 'ok') throw new Error(data.message);
+  const drawer = document.getElementById('profile-drawer');
 
-      const link = `${location.origin}${data.url}`;
-      try { await navigator.clipboard.writeText(link); } catch (_) {}
-      showToast('Live track created — link copied');
-    } catch (err) {
-      showToast('Could not create live track');
-      console.error(err);
-    }
+  function openDrawer() { drawer.classList.add('open'); }
+  function closeDrawer() { drawer.classList.remove('open'); }
+
+  /* ------------------------------------------------------------------ */
+  /* 9. SOS + emergency-contact visuals (client-side demo behaviour)     */
+  /* ------------------------------------------------------------------ */
+  function triggerSOS() {
+    showToast('SOS triggered — location shared with emergency contacts');
+    const overlay = document.createElement('div');
+    overlay.className =
+      'fixed inset-0 z-[1550] bg-red-600/30 flex items-center justify-center pointer-events-none';
+    overlay.innerHTML =
+      '<p class="bg-red-600 text-white font-extrabold tracking-widest px-6 py-3 rounded-full ' +
+      'shadow-[0_0_40px_rgba(220,38,38,0.8)] animate-pulse">SOS ACTIVE — HELP EN ROUTE</p>';
+    document.body.appendChild(overlay);
+    setTimeout(() => overlay.remove(), 4000);
+  }
+
+  function persistToggle(id, key) {
+    const el = document.getElementById(id);
+    // Restore from localStorage
+    const saved = localStorage.getItem(key);
+    if (saved !== null) el.checked = saved === '1';
+    // Reflect restored state in the Mom share note (if present)
+    const note = document.getElementById('mom-share-note');
+    if (note) note.classList.toggle('hidden', !el.checked);
+    // Save on change + visual feedback
+    el.addEventListener('change', () => {
+      localStorage.setItem(key, el.checked ? '1' : '0');
+      const note = document.getElementById('mom-share-note');
+      if (note) note.classList.toggle('hidden', !el.checked);
+      showToast(
+        el.checked
+          ? window.__toggleLabels?.[key]?.on ?? 'Setting enabled'
+          : window.__toggleLabels?.[key]?.off ?? 'Setting disabled'
+      );
+    });
+    return el;
   }
 
   /* ------------------------------------------------------------------ */
-  /* 10. Bottom-sheet expand/collapse                                    */
+  /* 10. Sheet + dock helpers                                            */
   /* ------------------------------------------------------------------ */
   const sheet = document.getElementById('bottom-sheet');
   const SHEET_OPEN = 'translate-y-0';
@@ -797,23 +826,14 @@
     sheetOpen = !sheetOpen;
     sheet.classList.toggle(SHEET_CLOSED, !sheetOpen);
     sheet.classList.toggle(SHEET_OPEN, sheetOpen);
-    document.getElementById('sheet-chevron').style.transform = sheetOpen ? 'rotate(180deg)' : '';
+    document.getElementById('sheet-chevron').style.transform =
+      sheetOpen ? 'rotate(180deg)' : '';
   }
 
-  /* ------------------------------------------------------------------ */
-  /* 11. Dock button active styling + helpers                            */
-  /* ------------------------------------------------------------------ */
-  function styleDockButton(btn, active) {
-    btn.classList.toggle('bg-neon', active);
-    btn.classList.toggle('text-black', active);
-    btn.classList.toggle('text-neon', !active);
-    btn.classList.toggle('shadow-[0_0_18px_rgba(173,255,47,0.6)]', active);
-  }
-
-  function setDockLabel(text) {
-    const el = document.getElementById('dock-label');
-    el.textContent = text || '';
-    el.classList.toggle('hidden', !text);
+  function styleDockButton(btn, isActive) {
+    btn.classList.toggle('bg-neon', isActive);
+    btn.classList.toggle('text-black', isActive);
+    btn.classList.toggle('text-neon', !isActive);
   }
 
   function formatDistance(m) {
@@ -830,54 +850,55 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* 12. Wire-up event listeners                                         */
+  /* 11. Wire-up event listeners                                         */
   /* ------------------------------------------------------------------ */
-  // Tabs
   document.querySelectorAll('.tab-btn').forEach((btn) =>
     btn.addEventListener('click', () => setTab(btn.dataset.tab)));
 
-  // Sheet
   document.getElementById('sheet-toggle').addEventListener('click', toggleSheet);
+  document.getElementById('btn-nav').addEventListener('click', startNavigation);
 
   // Dock toggles
-  const btnHeat = document.getElementById('btn-heatmap');
-  const btnZones = document.getElementById('btn-zones');
-  const btnInc = document.getElementById('btn-incidents');
-
-  btnHeat.addEventListener('click', () => {
+  document.getElementById('btn-heatmap').addEventListener('click', () => {
     toggleHeatmap();
-    styleDockButton(btnHeat, heatVisible);
-    setDockLabel(heatVisible ? 'Safety heatmap' : '');
+    styleDockButton(document.getElementById('btn-heatmap'), heatVisible);
     showToast(heatVisible ? 'Safety heatmap on' : 'Safety heatmap off');
   });
 
-  btnZones.addEventListener('click', () => {
+  document.getElementById('btn-zones').addEventListener('click', () => {
     toggleZones();
-    styleDockButton(btnZones, zonesVisible);
-    setDockLabel(zonesVisible ? 'Safe zones' : '');
+    styleDockButton(document.getElementById('btn-zones'), zonesVisible);
     showToast(zonesVisible ? 'Safe zones shown' : 'Safe zones hidden');
   });
 
-  btnInc.addEventListener('click', () => {
-    toggleIncidents();
-    styleDockButton(btnInc, incidentsVisible);
-    setDockLabel(incidentsVisible ? 'Report incident' : '');
-  });
+  // Profile drawer
+  const btnProfile = document.getElementById('btn-profile');
+  if (btnProfile) btnProfile.addEventListener('click', openDrawer);
+  document.getElementById('btn-close-drawer').addEventListener('click', closeDrawer);
 
-  // Report compose card
-  document.getElementById('report-cancel').addEventListener('click', hideReportCard);
-  document.getElementById('report-submit').addEventListener('click', submitReport);
+  // SOS
+  const btnSos = document.getElementById('btn-sos');
+  if (btnSos) btnSos.addEventListener('click', triggerSOS);
 
-  // Main CTA + share
-  document.getElementById('btn-nav').addEventListener('click', startNavigation);
-  document.getElementById('btn-share').addEventListener('click', shareTrack);
+  // Emergency contact + prefs toggles (persist across reloads)
+  if (document.getElementById('toggle-mom')) {
+    window.__toggleLabels = {
+      'lp:share-mom': { on: 'Mom will auto-share your live track', off: 'Location sharing paused' },
+      'lp:cctv':      { on: 'CCTV priority on — camera streets favoured', off: 'CCTV priority off' },
+      'lp:alleys':    { on: 'Unlit alleys avoided', off: 'Unlit alleys allowed' },
+    };
+  }
+  if (document.getElementById('toggle-mom')) persistToggle('toggle-mom', 'lp:share-mom');
+  if (document.getElementById('toggle-cctv')) persistToggle('toggle-cctv', 'lp:cctv');
+  if (document.getElementById('toggle-alleys')) persistToggle('toggle-alleys', 'lp:alleys');
 
   /* ------------------------------------------------------------------ */
-  /* 13. Boot the app                                                    */
+  /* 12. Boot the app                                                    */
   /* ------------------------------------------------------------------ */
   (async function init() {
-    // Preload datasources, then draw routes last so the fitBounds includes them.
-    await Promise.all([loadZones(), loadIncidents(), loadHeatmap()]);
+    // Dynamic safety heatmap at load (then the dock toggle re-shows it lazily).
+    renderDynamicHeatmap(map.getCenter().lat, map.getCenter().lng);
+    await loadZones();
     await loadRoutes();
   })();
   </script>

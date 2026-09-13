@@ -90,15 +90,18 @@ def routes_api(request):
     fastest = resolve_route(start_lat, start_lng, end_lat, end_lng, profile="fastest")
 
     if "error" in safest and "error" in fastest:
-        return JsonResponse({"status": "error", "message": safest["error"]}, status=500)
+        code = 400 if safest.get("error_code") == "same_node" else 500
+        return JsonResponse({"status": "error", "message": safest["error"]}, status=code)
     if "error" in fastest:
+        code = 400 if fastest.get("error_code") == "same_node" else 500
         return JsonResponse({"status": "error",
                              "message": f"Fastest routing failed: {fastest['error']}"},
-                            status=500)
+                            status=code)
     if "error" in safest:
+        code = 400 if safest.get("error_code") == "same_node" else 500
         return JsonResponse({"status": "error",
                              "message": f"Safest routing failed: {safest['error']}"},
-                            status=500)
+                            status=code)
 
     return JsonResponse({"status": "ok", "safest": safest, "fastest": fastest})
 

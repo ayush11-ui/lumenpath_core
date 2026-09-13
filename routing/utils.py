@@ -207,6 +207,12 @@ def resolve_route(start_lat, start_lng, end_lat, end_lng, profile="safest",
     if start_key is None or end_key is None:
         return {"error": "No street graph available."}
 
+    if start_key == end_key:
+        return {
+            "error": "Destination is too close to the start point to plan a route.",
+            "error_code": "same_node",
+        }
+
     if profile == "safest":
         cost_fn = make_cost_safest(avoid_unlit=avoid_unlit, cctv_priority=cctv_priority)
     else:
@@ -224,6 +230,8 @@ def resolve_route(start_lat, start_lng, end_lat, end_lng, profile="safest",
 
     distance = sum(s.distance_meters for s in segments)
     duration_min = distance / 80.0  # average walking pace ~80 m/min (4.8 km/h)
+    if not segments:
+        return {"error": f"No traversable path for profile '{profile}'.", "error_code": "no_segments"}
     raw_index = sum(_segment_safety_score(s) for s in segments) / len(segments) * 100
     safety_index = round(min(100.0, max(0.0, raw_index)))
 

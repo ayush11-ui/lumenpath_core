@@ -10,22 +10,52 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+# ---- Minimal .env loader (no third-party dependency) ---------------------
+# Reads KEY=VALUE lines from BASE_DIR/.env (if present) into os.environ so all
+# secrets live outside source control. Values exported in the real shell take
+# precedence (setdefault semantics).
+def _load_env(path):
+    if not Path(path).exists():
+        return
+    for line in Path(path).read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_env(BASE_DIR / '.env')
+
+
+def _env_bool(name, default=False):
+    return os.environ.get(name, str(default)).lower() in ('1', 'true', 'yes', 'on')
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-#t3nd*#07$1v#l+w0d^xk@3gb$y1v8%ap%ezz87154fuq9ds3e'
+SECRET_KEY = os.environ.get(
+    'SECRET_KEY',
+    'django-insecure-#t3nd*#07$1v#l+w0d^xk@3gb$y1v8%ap%ezz87154fuq9ds3e',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = _env_bool('DEBUG', default=True)
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.environ.get('ALLOWED_HOSTS', '*').split(',')
+    if h.strip()
+]
 
 
 # Application definition
@@ -93,13 +123,16 @@ AUTHENTICATION_BACKENDS = [
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
 
-# Social providers: map allauth to a generic provider lookup. The actual
-# OAuth client id/secret live in the Django admin (Sites → Social Apps).
+# Social providers. Credentials come from env (department-local .env file):
+#   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
+# An administrator may alternatively configure the client in the Django admin
+# (Sites -> Social applications). If no credentials are set the site still runs;
+# only the Google login handshake will fail at Google's consent screen.
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
         'APP': {
-            'client_id': '',
-            'secret': '',
+            'client_id': os.environ.get('GOOGLE_CLIENT_ID', ''),
+            'secret': os.environ.get('GOOGLE_CLIENT_SECRET', ''),
             'key': '',
         },
         # Scopes requested from Google's OAuth screen
@@ -119,7 +152,8 @@ SOCIALACCOUNT_PROVIDERS = {
 SOCIALACCOUNT_LOGIN_ON_GET = True
 # Create accounts on first social login without manual confirmation pages.
 SOCIALACCOUNT_AUTO_SIGNUP = True
-ACCOUNT_EMAIL_REQUIRED = True
+# Required signup fields (allauth >= 65 renamed ACCOUNT_EMAIL_REQUIRED).
+ACCOUNT_SIGNUP_FIELDS = ['email*', 'username*', 'password1*', 'password2*']
 ACCOUNT_DEFAULT_HTTP_PROTOCOL = 'http'
 
 WSGI_APPLICATION = 'lumenpath_core.wsgi.application'

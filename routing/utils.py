@@ -64,15 +64,36 @@ def cost_fastest(seg):
     return float(seg.distance_meters)
 
 
-def cost_safest(seg):
-    """Cost of a segment for the 'safest' profile.
-
-    Dark roads and high-crime areas inflate the effective distance so the
-    solver trades a little extra travel time for much better security.
+def _base_cost_safest(seg):
+    """Base safety-weighted cost: dark roads and high-crime areas inflate the
+    effective distance so the solver trades a little extra travel time for much
+    better security.
     """
     return float(seg.distance_meters) * (
         1.0 + (10.0 - float(seg.lighting_score)) * 0.4 + float(seg.crime_rate) * 0.3
     )
+
+
+def make_cost_safest(avoid_unlit=False, cctv_priority=False):
+    """Build a safety cost function honouring the user's routing preferences.
+
+    * avoid_unlit     — very dark blocks (lighting <= 2) get a heavy penalty
+    * cctv_priority   — CCTV-covered streets get a mild discount
+    """
+    def cost(seg):
+        c = _base_cost_safest(seg)
+        if avoid_unlit and seg.lighting_score <= 2:
+            c *= 6.0
+        if cctv_priority and bool(seg.has_cctv):
+            c *= 0.82
+        return c
+
+    return cost
+
+
+def cost_safest(seg):
+    """Default safety cost (no routing preferences)."""
+    return make_cost_safest()(seg)
 
 
 COST_FUNCTIONS = {
@@ -152,7 +173,11 @@ def dijkstra(adjacency, start_key, end_key, cost_fn):
 
 
 def _segment_safety_score(seg):
-    """0..1 rating combining lighting + crime using fixed weights."""
+    """0..1 rating combining lighting + crime using fixed weights.
+
+    Higher = safer. Crime is *inverted* before weighting so more crime lowers
+    the score, exactly as the product spec requires.
+    """
     lighting_norm = (float(seg.lighting_score) - 1.0) / 9.0   # 1..10 → 0..1
     crime_norm = 1.0 - (float(seg.crime_rate) - 1.0) / 9.0    # inverted 1..10
     return (
@@ -161,7 +186,12 @@ def _segment_safety_score(seg):
     )
 
 
-def resolve_route(start_lat, start_lng, end_lat, end_lng, profile="safest"):
+# Public alias so views (e.g. the dynamic heatmap) can reuse the same 0..1 score.
+segment_safety_score = _segment_safety_score
+
+
+def resolve_route(start_lat, start_lng, end_lat, end_lng, profile="safest",
+                  avoid_unlit=False, cctv_priority=False):
     """High-level entry point used by the API.
 
     Returns a fully serialisable route dict containing the walkable coordinate
@@ -174,8 +204,14 @@ def resolve_route(start_lat, start_lng, end_lat, end_lng, profile="safest"):
 
     start_key = _nearest_node(adjacency, start_lat, start_lng)
     end_key = _nearest_node(adjacency, end_lat, end_lng)
+    if start_key is None or end_key is None:
+        return {"error": "No street graph available."}
 
-    cost_fn = COST_FUNCTIONS.get(profile, COST_FUNCTIONS["safest"])
+    if profile == "safest":
+        cost_fn = make_cost_safest(avoid_unlit=avoid_unlit, cctv_priority=cctv_priority)
+    else:
+        cost_fn = COST_FUNCTIONS.get(profile, COST_FUNCTIONS["safest"])
+
     total_cost, path_keys = dijkstra(adjacency, start_key, end_key, cost_fn)
     if not path_keys:
         return {"error": f"No reachable path for profile '{profile}'."}
@@ -188,7 +224,8 @@ def resolve_route(start_lat, start_lng, end_lat, end_lng, profile="safest"):
 
     distance = sum(s.distance_meters for s in segments)
     duration_min = distance / 80.0  # average walking pace ~80 m/min (4.8 km/h)
-    safety_index = round(sum(_segment_safety_score(s) for s in segments) / len(segments) * 100)
+    raw_index = sum(_segment_safety_score(s) for s in segments) / len(segments) * 100
+    safety_index = round(min(100.0, max(0.0, raw_index)))
 
     return {
         "profile": profile,

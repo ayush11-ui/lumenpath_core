@@ -67,13 +67,14 @@
     /* Monochrome, watermark-free carto look applied to the OSM tiles */
     .custom-map-filter { filter: grayscale(100%) contrast(1.1) opacity(0.8); }
 
-    /* Neon glow on the safest route polyline */
-    .route-safest path {
+    /* Neon glow on the safest route polyline (Leaflet puts the class on the
+       SVG <path> element itself) */
+    path.route-safest {
       filter: drop-shadow(0 0 6px rgba(118, 255, 3, 0.9));
       transition: opacity .35s ease;
     }
-    .route-fastest path { transition: opacity .35s ease; }
-    .route-dim path { opacity: 0.25 !important; }
+    path.route-fastest { transition: opacity .35s ease; }
+    path.route-dim { opacity: 0.25 !important; }
 
     /* Pulsing start/end markers (pure CSS ring animation) */
     .lumen-marker { position: relative; width: 22px; height: 22px; }
@@ -122,6 +123,16 @@
     .zone-police   { background: #2563eb; }
     .zone-hospital { background: #e11d48; }
     .zone-store    { background: #0d9488; }
+
+    /* Incident pins by severity */
+    .incident-pin {
+      width: 14px; height: 14px; border-radius: 9999px 9999px 9999px 0;
+      transform: rotate(-45deg); border: 2px solid #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,.35);
+    }
+    .incident-low    { background: #22c55e; }
+    .incident-medium { background: #f59e0b; }
+    .incident-high   { background: #ef4444; }
 
     /* Dynamic heatmap probes */
     .safety-probe {
@@ -176,7 +187,7 @@
   </style>
 </head>
 
-<body class="bg-black text-slate-900 antialiased">
+<body class="bg-black text-slate-900 antialiased" data-auth="{{ user.is_authenticated|yesno:'1,0' }}">
 
   <!-- ================================================================ -->
   <!-- Full-screen Leaflet map                                          -->
@@ -201,13 +212,13 @@
   <div class="fixed top-4 right-4 z-[1100]">
     {% if user.is_authenticated %}
       <!-- Signed-in: avatar opens the profile drawer -->
-      <button id="btn-profile"
+      <button id="btn-profile" aria-label="Open profile menu"
               class="w-11 h-11 rounded-full bg-black/85 backdrop-blur p-0.5 border-2 border-neon
                      shadow-[0_0_18px_rgba(173,255,47,0.5)] overflow-hidden
                      hover:scale-105 active:scale-95 transition">
         {% with social_acc=user.socialaccount_set.all.0 %}
-          {% if social_acc %}
-            <img src="{{ social_acc.get_avatar_url|default:'/static/img/avatar.png' }}"
+          {% if social_acc and social_acc.get_avatar_url %}
+            <img src="{{ social_acc.get_avatar_url }}"
                  alt="Profile" class="w-full h-full rounded-full object-cover"
                  onerror="this.style.display='none';" />
           {% else %}
@@ -253,10 +264,14 @@
           <!-- Avatar + identity -->
           <div class="flex items-center gap-4 mb-6">
             <div class="w-16 h-16 rounded-full overflow-hidden border-2 border-neon shadow-lg">
-              {% if social_acc %}
-                <img src="{{ social_acc.get_avatar_url|default:'' }}" alt="Avatar"
+              {% if social_acc and social_acc.get_avatar_url %}
+                <img src="{{ social_acc.get_avatar_url }}" alt="Avatar"
                      class="w-full h-full object-cover"
                      onerror="this.style.display='none';this.parentElement.style.background='#ADFF2F';" />
+              {% else %}
+                <span class="w-full h-full bg-neon text-black flex items-center justify-center text-xl font-extrabold">
+                  {{ user.first_name|default:user.username|slice:":1"|upper }}
+                </span>
               {% endif %}
             </div>
             <div>
@@ -317,13 +332,16 @@
           <p class="text-[11px] text-slate-400 mt-1 pl-1">Saved automatically on this device.</p>
         </section>
 
-        <!-- SOS -->
-        <button id="btn-sos"
+        <!-- SOS (opens an honest confirm flow — nothing is dispatched in this build) -->
+        <button id="btn-sos" aria-label="Trigger SOS flow"
                 class="w-full rounded-2xl bg-red-600 py-4 text-sm font-extrabold tracking-widest
                        text-white shadow-[0_10px_30px_rgba(220,38,38,0.45)]
-                       hover:scale-[1.02] active:scale-[0.98] transition mb-4">
+                       hover:scale-[1.02] active:scale-[0.98] transition mb-2">
           TRIGGER SOS
         </button>
+        <p class="text-[10px] text-slate-400 mb-6 text-center leading-relaxed">
+          Demo build: SOS opens a confirmation flow. No real alert is sent.
+        </p>
 
         <!-- Logout (allauth's logout requires a POST) -->
         <form method="post" action="/accounts/logout/"
@@ -428,6 +446,7 @@
           <div id="safety-fill" class="meter-fill" style="width:0%"></div>
         </div>
         <p id="safety-note" class="text-[11px] text-slate-500 mt-1.5"></p>
+        <p class="text-[10px] text-slate-400 mt-0.5">Estimated safety from lighting &amp; incident data — not a guarantee.</p>
       </div>
 
       <!-- Route metrics grid -->
@@ -454,8 +473,54 @@
         Start Safe Navigation
       </button>
 
+      <!-- Route planner actions -->
+      <div class="grid grid-cols-2 gap-2 mb-2">
+        <button id="btn-set-start" aria-label="Place the start point"
+                class="planner-btn rounded-full bg-slate-100 py-2 text-[11px] font-bold text-slate-700
+                       hover:bg-slate-200 transition">Set start point</button>
+        <button id="btn-set-dest" aria-label="Place the destination"
+                class="planner-btn rounded-full bg-slate-100 py-2 text-[11px] font-bold text-slate-700
+                       hover:bg-slate-200 transition">Set destination</button>
+      </div>
+      <div class="grid grid-cols-2 gap-2 mb-2">
+        <button id="btn-reset-route" aria-label="Reset the route"
+                class="rounded-2xl bg-slate-50 py-2 text-[11px] font-bold text-slate-500
+                       hover:bg-slate-100 transition">Reset route</button>
+        <button id="btn-report-incident" aria-label="Report an incident"
+                class="rounded-2xl bg-slate-50 py-2 text-[11px] font-bold text-amber-600
+                       hover:bg-amber-50 transition">Report incident</button>
+      </div>
+      <button id="btn-share-track" aria-label="Share live track"
+              class="w-full rounded-2xl border border-slate-200 py-2.5 text-[11px] font-bold text-slate-600
+                     hover:bg-slate-50 transition mb-2">Share live track</button>
+
+      <div id="share-box" class="hidden mb-2 p-3 rounded-2xl bg-slate-50">
+        <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1">
+          Shareable track URL
+        </p>
+        <div class="flex gap-2">
+          <input id="share-url" type="text" readonly value=""
+                 class="flex-1 min-w-0 text-[11px] bg-white border border-slate-200 rounded-xl px-3 py-2
+                        text-slate-700" />
+          <button id="btn-copy-url" aria-label="Copy track URL"
+                  class="rounded-xl bg-black text-lumen px-3 text-[11px] font-bold hover:opacity-80 transition">
+            Copy
+          </button>
+        </div>
+        <p class="text-[10px] text-slate-400 mt-1">
+          Open this URL on another device to follow the walk (polled, not realtime).
+        </p>
+      </div>
+      <button id="btn-open-link" aria-label="Open the track URL"
+              class="hidden mb-2 w-full rounded-2xl border border-lumen/50 py-2 text-[11px] font-bold
+                     text-lumen bg-black hover:opacity-90 transition">Open track link</button>
+
       <!-- tiny live-walk status -->
       <p id="walk-status" class="hidden mt-2 text-center text-[11px] font-semibold text-slate-500"></p>
+      <!-- planner hint -->
+      <p id="place-hint" class="mt-1 text-center text-[11px] font-semibold text-slate-400">
+        Click the map to set a start and a destination.
+      </p>
     </div>
   </section>
 
@@ -468,101 +533,101 @@
   </div>
 
   <!-- ================================================================ -->
+  <!-- Incident report modal                                            -->
+  <!-- ================================================================ -->
+  <div id="incident-modal" class="hidden fixed inset-0 z-[1600] flex items-end sm:items-center justify-center
+                                  bg-black/50 p-4">
+    <div class="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl" role="dialog" aria-modal="true"
+         aria-labelledby="incident-title">
+      <div class="flex items-center justify-between mb-3">
+        <h3 id="incident-title" class="text-base font-extrabold text-slate-900">Report an incident</h3>
+        <button id="btn-incident-close" aria-label="Close"
+                class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold hover:bg-slate-200 transition">✕</button>
+      </div>
+      <p id="incident-latlng" class="text-[11px] text-slate-400 mb-3"></p>
+
+      <label for="incident-type" class="block text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Type</label>
+      <select id="incident-type" class="w-full mb-3 rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 bg-white">
+        <option value="streetlight outage">Streetlight outage</option>
+        <option value="suspicious activity">Suspicious activity</option>
+        <option value="poor pavement">Poor pavement</option>
+      </select>
+
+      <label for="incident-severity" class="block text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Severity</label>
+      <select id="incident-severity" class="w-full mb-3 rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 bg-white">
+        <option>Low</option>
+        <option selected>Medium</option>
+        <option>High</option>
+      </select>
+
+      <label for="incident-desc" class="block text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1">Description (optional)</label>
+      <input id="incident-desc" maxlength="500" placeholder="e.g. three lamps out"
+             class="w-full mb-4 rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700" />
+
+      <div class="flex gap-2">
+        <button id="btn-incident-cancel" class="flex-1 rounded-xl bg-slate-100 py-3 text-sm font-bold text-slate-600 hover:bg-slate-200 transition">Cancel</button>
+        <button id="btn-incident-submit" class="flex-1 rounded-xl bg-red-600 py-3 text-sm font-bold text-white hover:bg-red-700 transition">Submit report</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- SOS confirmation modal (honest demo behaviour)                   -->
+  <!-- ================================================================ -->
+  <div id="sos-modal" class="hidden fixed inset-0 z-[1600] flex items-center justify-center bg-black/60 p-4">
+    <div class="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl text-center" role="alertdialog" aria-modal="true">
+      <span class="w-14 h-14 mx-auto rounded-full bg-red-100 text-red-600 flex items-center justify-center
+                   text-2xl font-black mb-3">!</span>
+      <h3 class="text-base font-extrabold text-slate-900 mb-2">Trigger SOS?</h3>
+      <p id="sos-modal-text" class="text-xs text-slate-500 mb-4"></p>
+      <div class="flex gap-2">
+        <button id="btn-sos-cancel" class="flex-1 rounded-xl bg-slate-100 py-3 text-sm font-bold text-slate-600 hover:bg-slate-200 transition">Cancel</button>
+        <button id="btn-sos-confirm" class="flex-1 rounded-xl bg-red-600 py-3 text-sm font-bold text-white hover:bg-red-700 transition">Confirm SOS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
   <!-- Application script                                              -->
   <!-- ================================================================ -->
   <script>
   /* ------------------------------------------------------------------ */
-  /* 0. Leaflet map bootstrap                                            */
+  /* 0. Bootstrap state (guest flag + persisted routing prefs)           */
+  /* ------------------------------------------------------------------ */
+  const LUMEN_AUTH = document.body.dataset.auth === '1';
+  let avoidUnlit  = localStorage.getItem('lp:alleys')    !== '0';
+  let cctvPriority = localStorage.getItem('lp:cctv')     === '1';
+  let momShareOn   = localStorage.getItem('lp:share-mom') !== '0';
+
+  /* ------------------------------------------------------------------ */
+  /* Map bootstrap — CartoDB Positron raster tiles                       */
   /* ------------------------------------------------------------------ */
   const map = L.map('map', { zoomControl: false, attributionControl: true })
     .setView([-34.6210, -58.4420], 15);
 
-  // Standard OpenStreetMap tiles, styled monochrome via CSS filter.
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    subdomains: 'abc',
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
     maxZoom: 20,
-    className: 'custom-map-filter',   // <-- the sleek grayscale carto look
+    minZoom: 3,
+    className: 'custom-map-filter',
   }).addTo(map);
 
-  L.control.zoom({ position: 'bottomright' }).addTo(map);
+  // Zoom in the top-left corner so the bottom sheet never covers it.
+  L.control.zoom({ position: 'topleft' }).addTo(map);
 
   /* ------------------------------------------------------------------ */
-  /* 1. Default origin / destination for the demo                        */
+  /* 1. Route state + click-to-place ends                                */
   /* ------------------------------------------------------------------ */
-  const START = { lat: -34.6265, lng: -58.4491 };   // south-west of mock grid
-  const END   = { lat: -34.6015, lng: -58.4171 };   // north-east of mock grid
+  const DEFAULT_START = { lat: -34.6265, lng: -58.4491 };
+  const DEFAULT_END   = { lat: -34.6015, lng: -58.4171 };
 
-  /* ------------------------------------------------------------------ */
-  /* 2. Dynamic safety heatmap layer                                     */
-  /* ------------------------------------------------------------------ */
-  const heatLayer = L.layerGroup();
-  let heatVisible = false;
+  let startPoint = null;
+  let endPoint   = null;
+  let placeMode  = null;            // null=auto · 'start' · 'end'
 
-  /**
-   * Fetch /api/dynamic-heatmap/ around (centerLat, centerLng) and render 30
-   * colored circle markers:
-   *   #ADFF2F (green/yellow neon)  → safe
-   *   #FFD700 (yellow)             → moderate
-   *   #FF4500 (red)                → unsafe
-   */
-  function renderDynamicHeatmap(centerLat, centerLng) {
-    const params = new URLSearchParams({
-      lat: centerLat,
-      lng: centerLng,
-      radius_m: 600,
-    });
-
-    fetch(`/api/dynamic-heatmap/?${params}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.status !== 'ok') throw new Error(data.message);
-        heatLayer.clearLayers();
-
-        const COLOR = { 1: '#ADFF2F', 2: '#FFD700', 3: '#FF4500' };
-        const LABEL = { 1: 'Safe', 2: 'Moderate', 3: 'Unsafe' };
-        const RADIUS = { 1: 14, 2: 18, 3: 22 };
-
-        (data.probes || []).forEach((probe) => {
-          const color = COLOR[probe.safety_level];
-          L.circleMarker([probe.lat, probe.lng], {
-            radius: RADIUS[probe.safety_level],
-            stroke: true,
-            color: 'rgba(255,255,255,.9)',
-            weight: 1.5,
-            fillColor: color,
-            fillOpacity: 0.55,
-            className: 'safety-probe',
-          }).bindTooltip(`Safety: ${LABEL[probe.safety_level]}`, {
-            direction: 'top',
-            className: 'lumen-tip',
-          }).addTo(heatLayer);
-        });
-
-        // Show the layer if the dock toggle is already ON.
-        if (heatVisible) map.addLayer(heatLayer);
-      })
-      .catch((err) => console.error('dynamic heatmap:', err));
-  }
-
-  function toggleHeatmap() {
-    heatVisible = !heatVisible;
-    if (heatVisible) map.addLayer(heatLayer); else map.removeLayer(heatLayer);
-  }
-
-  /* ------------------------------------------------------------------ */
-  /* 3. Route polylines + pins                                           */
-  /* ------------------------------------------------------------------ */
-  let safestPoly = null;
-  let fastestPoly = null;
   let startMarker = null;
   let endMarker = null;
-
-  let activeTab = 'safest';
-  let safestData = null;
-  let fastestData = null;
-  let navigationTimer = null;
-  let navigatorMarker = null;
 
   function pulseIcon() {
     return L.divIcon({
@@ -573,30 +638,109 @@
     });
   }
 
-  function placePins(start, end) {
-    if (startMarker) startMarker.setLatLng([start.lat, start.lng]);
-    else startMarker = L.marker([start.lat, start.lng], { icon: pulseIcon() })
+  function setStartMarker(p) {
+    if (startMarker) startMarker.setLatLng([p.lat, p.lng]);
+    else startMarker = L.marker([p.lat, p.lng], { icon: pulseIcon() })
       .bindTooltip('Start', { direction: 'top', className: 'lumen-tip' })
       .addTo(map);
-
-    if (endMarker) endMarker.setLatLng([end.lat, end.lng]);
-    else endMarker = L.marker([end.lat, end.lng], { icon: pulseIcon() })
+  }
+  function setEndMarker(p) {
+    if (endMarker) endMarker.setLatLng([p.lat, p.lng]);
+    else endMarker = L.marker([p.lat, p.lng], { icon: pulseIcon() })
       .bindTooltip('Destination', { direction: 'top', className: 'lumen-tip' })
       .addTo(map);
   }
+  function syncPins() {
+    if (startPoint) setStartMarker(startPoint);
+    if (endPoint) setEndMarker(endPoint);
+  }
+  function clearPins() {
+    if (startMarker) { map.removeLayer(startMarker); startMarker = null; }
+    if (endMarker) { map.removeLayer(endMarker); endMarker = null; }
+  }
+
+  function updatePlannerButtons() {
+    const active = (m) => ['bg-black', 'text-lumen', 'shadow-lg'];
+    const idle   = (m) => ['bg-slate-100', 'text-slate-700'];
+    const startBtn = document.getElementById('btn-set-start');
+    const destBtn  = document.getElementById('btn-set-dest');
+    [startBtn, destBtn].forEach((b) => b && b.classList.remove(
+      'bg-black', 'text-lumen', 'shadow-lg', 'bg-slate-100', 'text-slate-700'));
+    if (placeMode === 'start' && startBtn) active().forEach((c) => startBtn.classList.add(c));
+    else if (startBtn) idle().forEach((c) => startBtn.classList.add(c));
+    if (placeMode === 'end' && destBtn) active().forEach((c) => destBtn.classList.add(c));
+    else if (destBtn) idle().forEach((c) => destBtn.classList.add(c));
+  }
+
+  function setPlaceMode(mode) {
+    placeMode = mode;
+    updatePlannerButtons();
+    if (mode === 'start') showToast('Click the map to place the START point.');
+    else if (mode === 'end') showToast('Click the map to place the DESTINATION.');
+  }
+
+  function onMapClick(e) {
+    if (incidentMode) { openIncidentModal(e.latlng); return; }
+
+    const pos = { lat: e.latlng.lat, lng: e.latlng.lng };
+
+    if (placeMode === 'start') {
+      startPoint = pos; setStartMarker(pos);
+      if (endPoint) { routeNow(); } else { showToast('Start set — now click the destination.'); }
+      setPlaceMode('end');
+    } else if (placeMode === 'end') {
+      endPoint = pos; setEndMarker(pos);
+      if (startPoint) { routeNow(); } else { showToast('Destination set — now click the start.'); }
+    } else {
+      if (!startPoint) { startPoint = pos; setStartMarker(pos); showToast('Start set — click for destination.'); }
+      else if (!endPoint) { endPoint = pos; setEndMarker(pos); showToast('Destination set. Routing…'); routeNow(); }
+      else { showToast('Use “Set start / Set destination” to change points.'); }
+    }
+  }
+
+  function resetRoute() {
+    stopNavigation(true);
+    startPoint = null; endPoint = null;
+    clearPins();
+    if (safestPoly) { map.removeLayer(safestPoly); safestPoly = null; }
+    if (fastestPoly) { map.removeLayer(fastestPoly); fastestPoly = null; }
+    safestData = null; fastestData = null;
+    setPlaceMode(null);
+    document.getElementById('preview-line').textContent = 'No route yet — click the map.';
+    document.getElementById('safety-value').textContent = '—';
+    document.getElementById('safety-fill').style.width = '0%';
+    document.getElementById('metric-distance').textContent = '—';
+    document.getElementById('metric-eta').textContent = '—';
+    document.getElementById('metric-blocks').textContent = '—';
+    document.getElementById('place-hint').textContent = 'Click the map to set a start and a destination.';
+  }
 
   /* ------------------------------------------------------------------ */
-  /* 4. Fetch + draw both routes                                         */
+  /* 2. Route polylines + metrics                                        */
   /* ------------------------------------------------------------------ */
+  let safestPoly = null;
+  let fastestPoly = null;
+  let activeTab = 'safest';
+  let safestData = null;
+  let fastestData = null;
+
+  async function routeNow() {
+    if (!startPoint || !endPoint) return;
+    loadRoutes();
+  }
+
   async function loadRoutes() {
+    if (!startPoint || !endPoint) return;
     showToast('Routing safest and fastest options…');
 
     const params = new URLSearchParams({
-      start_lat: START.lat,
-      start_lng: START.lng,
-      end_lat: END.lat,
-      end_lng: END.lng,
+      start_lat: startPoint.lat,
+      start_lng: startPoint.lng,
+      end_lat: endPoint.lat,
+      end_lng: endPoint.lng,
     });
+    if (avoidUnlit) params.set('avoid_unlit', '1');
+    if (cctvPriority) params.set('cctv', '1');
 
     try {
       const res = await fetch(`/api/routes/?${params}`);
@@ -606,35 +750,31 @@
       safestData = data.safest;
       fastestData = data.fastest;
 
-      // Safest: glowing neon lime, weight 6
-      safestPoly = L.polyline(data.safest.path, {
+      if (safestPoly) map.removeLayer(safestPoly);
+      if (fastestPoly) map.removeLayer(fastestPoly);
+
+      safestPoly = L.polyline(safestData.path, {
         color: '#76FF03', weight: 6, opacity: 0.95, className: 'route-safest',
       }).addTo(map);
 
-      // Fastest: translucent dashed slate
-      fastestPoly = L.polyline(data.fastest.path, {
+      fastestPoly = L.polyline(fastestData.path, {
         color: '#94A3B8', weight: 4, dashArray: '7 7', opacity: 0.85,
         className: 'route-fastest',
       }).addTo(map);
 
-      placePins(START, END);
-
-      map.fitBounds(L.latLngBounds([...data.safest.path, ...data.fastest.path]),
+      syncPins();
+      map.fitBounds(L.latLngBounds([...safestData.path, ...fastestData.path]),
         { padding: [60, 60] });
 
-      document.getElementById('preview-line').textContent =
-        `Safest ${formatDistance(data.safest.distance_meters)} · index ${data.safest.safety_index}/100`;
-
       setTab('safest');
+      document.getElementById('place-hint').textContent =
+        'Route ready — adjust points or start navigation below.';
     } catch (err) {
-      console.error(err);
-      showToast('Could not load routes. Run `python manage.py seed_data`.');
+      console.error('routes:', err);
+      showToast('Could not load routes. Try different points.');
     }
   }
 
-  /* ------------------------------------------------------------------ */
-  /* 5. Tab switching — visual focus + metric refresh                    */
-  /* ------------------------------------------------------------------ */
   function setTab(tab) {
     activeTab = tab;
 
@@ -646,8 +786,6 @@
       btn.classList.toggle('text-slate-500', !on);
     });
 
-    if (safestPoly) safestPoly.setStyle({ opacity: 1 });
-    if (fastestPoly) fastestPoly.setStyle({ opacity: 1 });
     document.querySelector('.route-safest')?.classList.toggle('route-dim', tab !== 'safest');
     document.querySelector('.route-fastest')?.classList.toggle('route-dim', tab !== 'fastest');
 
@@ -675,23 +813,74 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* 6. Safe zones (dock toggle)                                         */
+  /* 3. Dynamic safety heatmap (segment-derived probes)                  */
   /* ------------------------------------------------------------------ */
-  let zoneLayer = L.layerGroup();
+  const heatLayer = L.layerGroup();
+  let heatVisible = false;
+
+  function renderDynamicHeatmap(centerLat, centerLng) {
+    const params = new URLSearchParams({ lat: centerLat, lng: centerLng, radius_m: 600 });
+    fetch(`/api/dynamic-heatmap/?${params}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.status !== 'ok') throw new Error(data.message);
+        heatLayer.clearLayers();
+
+        const COLOR = { 1: '#ADFF2F', 2: '#FFD700', 3: '#FF4500' };
+        const LABEL = { 1: 'Safe', 2: 'Moderate', 3: 'Unsafe' };
+        const RADIUS = { 1: 12, 2: 16, 3: 20 };
+
+        (data.probes || []).forEach((probe) => {
+          L.circleMarker([probe.lat, probe.lng], {
+            radius: RADIUS[probe.safety_level],
+            stroke: true,
+            color: 'rgba(255,255,255,.9)',
+            weight: 1.5,
+            fillColor: COLOR[probe.safety_level],
+            fillOpacity: 0.55,
+            className: 'safety-probe',
+          }).bindTooltip(`Safety: ${LABEL[probe.safety_level]}`, {
+            direction: 'top',
+            className: 'lumen-tip',
+          }).addTo(heatLayer);
+        });
+
+        if (heatVisible) map.addLayer(heatLayer);
+      })
+      .catch((err) => console.error('dynamic heatmap:', err));
+  }
+
+  function toggleHeatmap() {
+    heatVisible = !heatVisible;
+    if (heatVisible) map.addLayer(heatLayer); else map.removeLayer(heatLayer);
+    if (heatVisible) renderDynamicHeatmap(map.getCenter().lat, map.getCenter().lng);
+  }
+
+  let heatTimer = null;
+  map.on('moveend', () => {
+    if (!heatVisible) return;
+    clearTimeout(heatTimer);
+    heatTimer = setTimeout(
+      () => renderDynamicHeatmap(map.getCenter().lat, map.getCenter().lng), 400);
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* 4. Safe zones                                                       */
+  /* ------------------------------------------------------------------ */
+  const zoneLayer = L.layerGroup();
   let zonesVisible = false;
 
   function loadZones() {
-    fetch('/api/safe-zones/')
+    return fetch('/api/safe-zones/')
       .then((res) => res.json())
       .then((data) => {
-        if (data.status !== 'ok') return;
-
+        if (data.status !== 'ok') throw new Error(data.message);
+        zoneLayer.clearLayers();
         data.safe_zones.forEach((z) => {
           const colorClass =
             z.zone_type === 'Police' ? 'zone-police'
           : z.zone_type === 'Hospital' ? 'zone-hospital'
           : 'zone-store';
-
           L.marker([z.lat, z.lng], {
             icon: L.divIcon({
               className: '',
@@ -713,29 +902,137 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* 7. Live navigation simulation (blue dot)                            */
+  /* 5. Incidents (fetch + report + modal)                               */
   /* ------------------------------------------------------------------ */
+  const incidentLayer = L.layerGroup();
+  let incidentMode = false;
+  let pendingIncident = null;
+
+  function addIncidentMarker(inc) {
+    const severityClass =
+      inc.severity === 'High' ? 'incident-high'
+    : inc.severity === 'Low' ? 'incident-low'
+    : 'incident-medium';
+    L.marker([inc.lat, inc.lng], {
+      icon: L.divIcon({
+        className: '',
+        html: `<span class="incident-pin ${severityClass}"></span>`,
+        iconSize: [14, 16],
+        iconAnchor: [7, 12],
+      }),
+    }).bindTooltip(`${inc.type} · ${inc.severity}`, {
+      direction: 'top', className: 'lumen-tip',
+    }).addTo(incidentLayer);
+  }
+
+  function loadIncidents() {
+    return fetch('/api/incidents/')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.status !== 'ok') throw new Error(data.message);
+        incidentLayer.clearLayers();
+        (data.incidents || []).forEach(addIncidentMarker);
+        map.addLayer(incidentLayer);
+      })
+      .catch((err) => console.error('incidents:', err));
+  }
+
+  function toggleIncidentMode() {
+    incidentMode = !incidentMode;
+    const btn = document.getElementById('btn-report-incident');
+    btn.classList.toggle('bg-amber-100', incidentMode);
+    btn.classList.toggle('text-amber-700', incidentMode);
+    showToast(incidentMode
+      ? 'Incident mode on — click the map where it happened.'
+      : 'Incident mode off.');
+  }
+
+  function openIncidentModal(ll) {
+    pendingIncident = ll;
+    document.getElementById('incident-latlng').textContent =
+      `Location: ${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)}`;
+    document.getElementById('incident-modal').classList.remove('hidden');
+  }
+
+  function closeIncidentModal() {
+    document.getElementById('incident-modal').classList.add('hidden');
+    pendingIncident = null;
+  }
+
+  async function submitIncident() {
+    if (!pendingIncident) return;
+    const body = {
+      type: document.getElementById('incident-type').value,
+      severity: document.getElementById('incident-severity').value,
+      lat: pendingIncident.lat,
+      lng: pendingIncident.lng,
+      description: document.getElementById('incident-desc').value,
+    };
+    const submitBtn = document.getElementById('btn-incident-submit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting…';
+    try {
+      const res = await fetch('/api/incidents/report/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.status !== 'ok') throw new Error(data.message || 'Report failed');
+      addIncidentMarker(data.incident);
+      closeIncidentModal();
+      incidentMode = false;
+      const btn = document.getElementById('btn-report-incident');
+      btn.classList.remove('bg-amber-100', 'text-amber-700');
+      showToast('Incident reported — thanks for looking out.');
+    } catch (err) {
+      console.error('report incident:', err);
+      showToast('Could not submit the report.');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Submit report';
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 6. Live navigation (blue dot follows the safest route)              */
+  /* ------------------------------------------------------------------ */
+  let navigationTimer = null;
+  let navigatorMarker = null;
+  let sessionLastUpdate = 0;
+
   function startNavigation() {
-    if (!safestData || !safestPoly || navigationTimer) return;
+    if (navigationTimer) { stopNavigation(false); return; }
+    if (!safestData || !safestData.path || safestData.path.length < 2) {
+      showToast('Route the safe path first.');
+      return;
+    }
 
     const coords = safestData.path;
-    if (coords.length < 2) return;
-
     navigatorMarker = L.marker(coords[0], {
       icon: L.divIcon({ className: '', html: '<div class="user-dot"></div>',
                         iconSize: [15, 15], iconAnchor: [7, 7] }),
       interactive: false,
     }).addTo(map);
+    map.panTo(coords[0]);
 
     const btn = document.getElementById('btn-nav');
-    btn.textContent = 'Walking your safe path…';
-    btn.setAttribute('disabled', 'disabled');
+    btn.textContent = 'Stop Navigation';
+    btn.removeAttribute('disabled');
     document.getElementById('walk-status').classList.remove('hidden');
+    document.getElementById('walk-status').textContent =
+      `Walking… segment 0/${coords.length - 1} · safety index ${safestData.safety_index}/100`;
+
+    sessionLastUpdate = 0;
+    if (momShareOn && !trackingToken) {
+      shareTrack();
+      showToast('Mom auto-share on — live track created.');
+    }
 
     let leg = 0;
     let t = 0;
-    const STEP = 0.02;      // progress per tick within a leg
-    const INTERVAL = 90;    // ms per tick
+    const STEP = 0.02;
+    const INTERVAL = 90;
 
     navigationTimer = setInterval(() => {
       const a = coords[leg];
@@ -757,7 +1054,27 @@
       const lng = a[1] + (b[1] - a[1]) * t;
       navigatorMarker.setLatLng([lat, lng]);
       map.panTo([lat, lng], { animate: true, duration: 0.12 });
+      pushTrackingUpdate();
     }, INTERVAL);
+  }
+
+  function stopNavigation(silent) {
+    if (!navigationTimer && !navigatorMarker) return;
+    clearInterval(navigationTimer);
+    navigationTimer = null;
+    if (navigatorMarker) { map.removeLayer(navigatorMarker); navigatorMarker = null; }
+    const btn = document.getElementById('btn-nav');
+    btn.textContent = 'Start Safe Navigation';
+    btn.removeAttribute('disabled');
+    document.getElementById('walk-status').textContent =
+      silent ? '' : 'Navigation stopped.';
+    if (trackingToken) {
+      fetch(`/api/sessions/${trackingToken}/update/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: false }),
+      }).catch(() => {});
+    }
   }
 
   function finishNavigation() {
@@ -769,49 +1086,124 @@
     document.getElementById('walk-status').textContent = 'Arrived! Stay lit.';
   }
 
+  function pushTrackingUpdate() {
+    if (!trackingToken || !navigatorMarker) return;
+    const now = Date.now();
+    if (now - sessionLastUpdate < 1200) return;
+    sessionLastUpdate = now;
+    const p = navigatorMarker.getLatLng();
+    fetch(`/api/sessions/${trackingToken}/update/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_lat: p.lat, current_lng: p.lng }),
+    }).catch((err) => console.error('tracking update:', err));
+  }
+
   /* ------------------------------------------------------------------ */
-  /* 8. Profile drawer                                                   */
+  /* 7. Live track sharing                                              */
+  /* ------------------------------------------------------------------ */
+  let trackingToken = null;
+  let trackingUrl = null;
+
+  function shareTrack() {
+    const dest = endPoint || DEFAULT_END;
+    const curr = startPoint || DEFAULT_START;
+    showToast('Creating live track session…');
+    fetch('/api/sessions/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        current_lat: curr.lat,
+        current_lng: curr.lng,
+        destination_lat: dest.lat,
+        destination_lng: dest.lng,
+      }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.status !== 'ok') throw new Error(data.message || 'Could not create session');
+        trackingToken = data.session_token;
+        trackingUrl = new URL(data.url, window.location.origin).href;
+        document.getElementById('share-box').classList.remove('hidden');
+        document.getElementById('share-url').value = trackingUrl;
+        document.getElementById('btn-open-link').classList.remove('hidden');
+        showToast('Live track link created.');
+      })
+      .catch((err) => {
+        console.error('share track:', err);
+        showToast('Could not create the track session.');
+      });
+  }
+
+  function copyTrackUrl() {
+    if (!trackingUrl) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(trackingUrl)
+        .then(() => showToast('Track URL copied.'))
+        .catch(() => fallbackCopy());
+    } else { fallbackCopy(); }
+  }
+  function fallbackCopy() {
+    const input = document.getElementById('share-url');
+    input.select();
+    try { document.execCommand('copy'); showToast('Track URL copied.'); }
+    catch (e) { showToast('Copy manually, then open the link.'); }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 8. Profile drawer + preference toggles                              */
   /* ------------------------------------------------------------------ */
   const drawer = document.getElementById('profile-drawer');
-
   function openDrawer() { drawer.classList.add('open'); }
   function closeDrawer() { drawer.classList.remove('open'); }
 
+  function persistToggle(id, key, onChange) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const saved = localStorage.getItem(key);
+    if (saved !== null) el.checked = saved === '1';
+    if (onChange) onChange(el.checked);
+    const note = document.getElementById('mom-share-note');
+    if (note) note.classList.toggle('hidden', !el.checked);
+
+    const labels = {
+      'lp:share-mom': { on: 'Mom will auto-share your live track', off: 'Location sharing paused' },
+      'lp:cctv':      { on: 'CCTV priority on — camera streets favoured', off: 'CCTV priority off' },
+      'lp:alleys':    { on: 'Unlit alleys avoided', off: 'Unlit alleys allowed' },
+    };
+
+    el.addEventListener('change', () => {
+      localStorage.setItem(key, el.checked ? '1' : '0');
+      if (onChange) onChange(el.checked);
+      const note = document.getElementById('mom-share-note');
+      if (note) note.classList.toggle('hidden', !el.checked);
+      const lbl = labels[key];
+      showToast(el.checked ? (lbl?.on ?? 'Setting enabled') : (lbl?.off ?? 'Setting disabled'));
+    });
+    return el;
+  }
+
   /* ------------------------------------------------------------------ */
-  /* 9. SOS + emergency-contact visuals (client-side demo behaviour)     */
+  /* 9. SOS — honest demo confirmation flow                              */
   /* ------------------------------------------------------------------ */
   function triggerSOS() {
-    showToast('SOS triggered — location shared with emergency contacts');
+    document.getElementById('sos-modal-text').textContent = LUMEN_AUTH
+      ? 'Demo build: no real emergency alert is dispatched. In production this would notify your saved emergency contacts and share your live location.'
+      : 'You are signed out. Sign in with Google and add emergency contacts to enable live-location SOS. No alert is sent in demo mode.';
+    document.getElementById('sos-modal').classList.remove('hidden');
+  }
+  function closeSos() { document.getElementById('sos-modal').classList.add('hidden'); }
+  function confirmSos() {
+    closeSos();
     const overlay = document.createElement('div');
     overlay.className =
       'fixed inset-0 z-[1550] bg-red-600/30 flex items-center justify-center pointer-events-none';
     overlay.innerHTML =
       '<p class="bg-red-600 text-white font-extrabold tracking-widest px-6 py-3 rounded-full ' +
-      'shadow-[0_0_40px_rgba(220,38,38,0.8)] animate-pulse">SOS ACTIVE — HELP EN ROUTE</p>';
+      'shadow-[0_0_40px_rgba(220,38,38,0.8)] animate-pulse">SOS FLOW ACTIVE (DEMO)</p>';
     document.body.appendChild(overlay);
     setTimeout(() => overlay.remove(), 4000);
-  }
-
-  function persistToggle(id, key) {
-    const el = document.getElementById(id);
-    // Restore from localStorage
-    const saved = localStorage.getItem(key);
-    if (saved !== null) el.checked = saved === '1';
-    // Reflect restored state in the Mom share note (if present)
-    const note = document.getElementById('mom-share-note');
-    if (note) note.classList.toggle('hidden', !el.checked);
-    // Save on change + visual feedback
-    el.addEventListener('change', () => {
-      localStorage.setItem(key, el.checked ? '1' : '0');
-      const note = document.getElementById('mom-share-note');
-      if (note) note.classList.toggle('hidden', !el.checked);
-      showToast(
-        el.checked
-          ? window.__toggleLabels?.[key]?.on ?? 'Setting enabled'
-          : window.__toggleLabels?.[key]?.off ?? 'Setting disabled'
-      );
-    });
-    return el;
+    showToast('SOS demonstration mode — no real alert was sent.');
   }
 
   /* ------------------------------------------------------------------ */
@@ -850,15 +1242,16 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* 11. Wire-up event listeners                                         */
+  /* 11. Event wiring                                                    */
   /* ------------------------------------------------------------------ */
+  map.on('click', onMapClick);
+
   document.querySelectorAll('.tab-btn').forEach((btn) =>
     btn.addEventListener('click', () => setTab(btn.dataset.tab)));
 
   document.getElementById('sheet-toggle').addEventListener('click', toggleSheet);
   document.getElementById('btn-nav').addEventListener('click', startNavigation);
 
-  // Dock toggles
   document.getElementById('btn-heatmap').addEventListener('click', () => {
     toggleHeatmap();
     styleDockButton(document.getElementById('btn-heatmap'), heatVisible);
@@ -871,6 +1264,25 @@
     showToast(zonesVisible ? 'Safe zones shown' : 'Safe zones hidden');
   });
 
+  // Route planner
+  document.getElementById('btn-set-start').addEventListener('click', () => setPlaceMode('start'));
+  document.getElementById('btn-set-dest').addEventListener('click', () => setPlaceMode('end'));
+  document.getElementById('btn-reset-route').addEventListener('click', resetRoute);
+  document.getElementById('btn-report-incident').addEventListener('click', toggleIncidentMode);
+  document.getElementById('btn-share-track').addEventListener('click', shareTrack);
+  document.getElementById('btn-copy-url').addEventListener('click', copyTrackUrl);
+  document.getElementById('btn-open-link').addEventListener('click', () => {
+    if (trackingUrl) window.open(trackingUrl, '_blank');
+  });
+
+  // Incident modal
+  document.getElementById('btn-incident-close').addEventListener('click', closeIncidentModal);
+  document.getElementById('btn-incident-cancel').addEventListener('click', closeIncidentModal);
+  document.getElementById('btn-incident-submit').addEventListener('click', submitIncident);
+  document.getElementById('incident-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeIncidentModal();
+  });
+
   // Profile drawer
   const btnProfile = document.getElementById('btn-profile');
   if (btnProfile) btnProfile.addEventListener('click', openDrawer);
@@ -879,26 +1291,27 @@
   // SOS
   const btnSos = document.getElementById('btn-sos');
   if (btnSos) btnSos.addEventListener('click', triggerSOS);
+  document.getElementById('btn-sos-confirm').addEventListener('click', confirmSos);
+  document.getElementById('btn-sos-cancel').addEventListener('click', closeSos);
+  document.getElementById('sos-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeSos();
+  });
 
-  // Emergency contact + prefs toggles (persist across reloads)
-  if (document.getElementById('toggle-mom')) {
-    window.__toggleLabels = {
-      'lp:share-mom': { on: 'Mom will auto-share your live track', off: 'Location sharing paused' },
-      'lp:cctv':      { on: 'CCTV priority on — camera streets favoured', off: 'CCTV priority off' },
-      'lp:alleys':    { on: 'Unlit alleys avoided', off: 'Unlit alleys allowed' },
-    };
-  }
-  if (document.getElementById('toggle-mom')) persistToggle('toggle-mom', 'lp:share-mom');
-  if (document.getElementById('toggle-cctv')) persistToggle('toggle-cctv', 'lp:cctv');
-  if (document.getElementById('toggle-alleys')) persistToggle('toggle-alleys', 'lp:alleys');
+  // Preference toggles (real effects: routing prefs, Mom auto-share)
+  persistToggle('toggle-mom', 'lp:share-mom', (v) => { momShareOn = v; });
+  persistToggle('toggle-cctv', 'lp:cctv', (v) => { cctvPriority = v; });
+  persistToggle('toggle-alleys', 'lp:alleys', (v) => { avoidUnlit = v; });
 
   /* ------------------------------------------------------------------ */
   /* 12. Boot the app                                                    */
   /* ------------------------------------------------------------------ */
   (async function init() {
-    // Dynamic safety heatmap at load (then the dock toggle re-shows it lazily).
+    startPoint = { ...DEFAULT_START };
+    endPoint = { ...DEFAULT_END };
+    syncPins();
+
     renderDynamicHeatmap(map.getCenter().lat, map.getCenter().lng);
-    await loadZones();
+    await Promise.all([loadIncidents(), loadZones()]);
     await loadRoutes();
   })();
   </script>

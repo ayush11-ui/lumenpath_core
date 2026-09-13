@@ -1,7 +1,7 @@
 """Seed the LumenPath SQLite database with demo data.
 
 Creates:
-  * 50+ connected street segments forming a connected mock-city grid. Each
+  * 127 connected street segments forming a connected mock-city grid. Each
     quadrilateral "block" in the grid shares corner nodes with its neighbours,
     so the whole 8x8 block area is one traversable graph.
   * 5 safe zones (Police, Hospital, 24/7 Stores).
@@ -9,6 +9,8 @@ Creates:
 
 Run with:
     python manage.py seed_data
+
+Idempotent: every run wipes the existing demo rows and rebuilds them.
 """
 
 import random
@@ -114,6 +116,7 @@ def make_segment(name, lat1, lng1, lat2, lng2, color):
         lighting_score=lighting,
         crime_rate=crime,
         distance_meters=dist,
+        has_cctv=random.random() < 0.45,  # ~45% of blocks have public CCTV
     )
 
 

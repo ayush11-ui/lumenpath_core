@@ -23,6 +23,10 @@ class StreetSegment(models.Model):
     lighting_score = models.IntegerField(choices=[(i, i) for i in range(1, 11)])
     crime_rate = models.IntegerField(choices=[(i, i) for i in range(1, 11)])
     distance_meters = models.FloatField(help_text="Length of the block in meters.")
+    has_cctv = models.BooleanField(
+        default=False,
+        help_text="Street is covered by public CCTV cameras (drives the CCTV-priority preference).",
+    )
 
     # Exact node → segment bookkeeping. We denormalise rounded coordinates so
     # the Dijkstra graph can match "node A == node B" reliably even when two
